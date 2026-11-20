@@ -1,0 +1,26 @@
+# Point HEI_CONFIG at a copy of this file. Any key can also be set as HEI_<KEY>.
+region: local
+edge_id: laptop
+
+edge_backend: openai            # openai (vLLM/llama.cpp/Ollama) | mock
+edge_base_url: http://127.0.0.1:8000/v1
+edge_model: Qwen/Qwen2.5-7B-Instruct
+edge_max_tokens: 512
+edge_temperature: 0.2
+
+gate_threshold: 0.70
+gate_consistency_samples: 0     # e.g. 3 for self-consistency (costs edge compute)
+gate_weights:
+  mean_prob: 0.35
+  min_window_prob: 0.25
+  entropy: 0.20
+  consistency: 0.20
+# gate_calibration_path: calibration.json
+
+cloud_provider: anthropic       # anthropic | bedrock | none
+cloud_model: claude-opus-5-5
+cloud_effort: medium
+cloud_max_escalations_per_min: 600
+
+record_sink: file               # none | stdout | file | firehose
+record_path: data/escalations.jsonl

@@ -1,0 +1,68 @@
+"""Edge model backend interface."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Protocol
+
+
+@dataclass
+class TokenInfo:
+    token: str
+    logprob: float
+    # Top-k alternatives at this position (token -> logprob), including the chosen one.
+    top: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class Generation:
+    text: str
+    tokens: List[TokenInfo]
+    finish_reason: str = "stop"
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency_ms: float = 0.0
+
+
+@dataclass
+class ChatMessage:
+    role: str  # "system" | "user" | "assistant"
+    content: str
+
+
+class EdgeBackend(Protocol):
+    name: str
+
+    async def generate(
+        self,
+        messages: List[ChatMessage],
+        *,
+        max_tokens: int,
+        temperature: float,
+        n: int = 1,
+        top_logprobs: int = 5,
+    ) -> List[Generation]:
+        """Return ``n`` generations with per-token logprobs."""
+        ...
+
+    async def ready(self) -> bool:
+        ...
+
+    async def aclose(self) -> None:
+        ...
+
+
+class EdgeBackendError(RuntimeError):
+    pass
+
+
+def estimate_tokens(messages: List[ChatMessage]) -> int:
+    """Cheap, tokenizer-free estimate (~4 chars/token) used for routing decisions only."""
+    return sum(len(m.content) for m in messages) // 4 + 4 * len(messages)
+
+
+def last_user(messages: List[ChatMessage]) -> Optional[str]:
+    for m in reversed(messages):
+        if m.role == "user":
+            return m.content
+    return None

@@ -1,0 +1,21 @@
+name         = "hybrid-edge"
+home_region  = "us-east-1"
+edge_regions = ["us-east-1", "eu-west-1", "ap-south-1"]
+
+edge_model    = "Qwen/Qwen2.5-7B-Instruct"
+instance_type = "g6.xlarge"
+min_nodes     = 1
+max_nodes     = 4
+
+gate_threshold           = 0.7
+gate_consistency_samples = 0
+
+cloud_provider = "anthropic" # or "bedrock"
+cloud_model    = "claude-opus-5-5"
+cloud_effort   = "medium"
+
+# certificate_arns = {
+#   "us-east-1"  = "arn:aws:acm:us-east-1:123456789012:certificate/..."
+#   "eu-west-1"  = "arn:aws:acm:eu-west-1:123456789012:certificate/..."
+#   "ap-south-1" = "arn:aws:acm:ap-south-1:123456789012:certificate/..."
+# }

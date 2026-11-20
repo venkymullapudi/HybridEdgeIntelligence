@@ -1,0 +1,45 @@
+# Local edge node.
+#   GPU:     docker compose -f docker/docker-compose.yml --profile gpu up
+#   No GPU:  docker compose -f docker/docker-compose.yml --profile mock up
+# Needs ANTHROPIC_API_KEY in the environment for escalations.
+services:
+  vllm:
+    profiles: ["gpu"]
+    image: vllm/vllm-openai:v0.6.6
+    command: ["--model", "${EDGE_MODEL:-Qwen/Qwen2.5-7B-Instruct}", "--max-model-len", "8192",
+              "--gpu-memory-utilization", "0.90", "--max-logprobs", "20"]
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    ports: ["8000:8000"]
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+
+  gateway:
+    profiles: ["gpu"]
+    build: { context: .., dockerfile: docker/Dockerfile }
+    depends_on: [vllm]
+    ports: ["8080:8080"]
+    environment:
+      HEI_EDGE_BACKEND: openai
+      HEI_EDGE_BASE_URL: http://vllm:8000/v1
+      HEI_EDGE_MODEL: ${EDGE_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      HEI_RECORD_SINK: file
+      HEI_RECORD_PATH: /tmp/escalations.jsonl
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+  gateway-mock:
+    profiles: ["mock"]
+    build: { context: .., dockerfile: docker/Dockerfile }
+    ports: ["8080:8080"]
+    environment:
+      HEI_EDGE_BACKEND: mock
+      HEI_RECORD_SINK: stdout
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+volumes:
+  hf-cache: {}
