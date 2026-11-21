@@ -40,6 +40,8 @@ class Metrics:
         self.latency_count: Dict[str, int] = defaultdict(int)
         # Per-source histogram counts, one slot per bucket plus +Inf.
         self.latency_buckets: Dict[str, List[int]] = defaultdict(lambda: [0] * (len(LATENCY_BUCKETS_MS) + 1))
+        self.first_token_buckets: List[int] = [0] * (len(LATENCY_BUCKETS_MS) + 1)
+        self.first_token_sum = 0.0
 
     def observe(self, source: str, escalated: bool, degraded: bool, score: Optional[float],
                 latency_ms: float, cloud_tokens: int = 0, cloud_cost: float = 0.0,
@@ -59,6 +61,12 @@ class Metrics:
             self.latency_buckets[source][bisect.bisect_left(LATENCY_BUCKETS_MS, latency_ms)] += 1
         if self.s.emit_emf:
             self._emf(source, escalated, degraded, score, latency_ms, cloud_tokens, cloud_cost, avoided_cost)
+
+    def observe_first_token(self, ms: float) -> None:
+        """Time to Claude's first text on a streamed escalation: what streaming buys."""
+        with self._lock:
+            self.first_token_buckets[bisect.bisect_left(LATENCY_BUCKETS_MS, ms)] += 1
+            self.first_token_sum += ms
 
     def incr(self, name: str, value: float = 1.0) -> None:
         with self._lock:
@@ -116,6 +124,14 @@ class Metrics:
                 lines.append(f'hybrid_edge_latency_ms_count{{{labels},source="{src}"}} {cnt}')
             req = self.counters.get("requests_total", 0.0)
             esc = self.counters.get("escalations_total", 0.0)
+            n_ft = sum(self.first_token_buckets)
+            if n_ft:
+                cumulative = 0
+                for le, n in zip([*map(str, LATENCY_BUCKETS_MS), "+Inf"], self.first_token_buckets):
+                    cumulative += n
+                    lines.append(f'hybrid_edge_cloud_first_token_ms_bucket{{{labels},le="{le}"}} {cumulative}')
+                lines.append(f"hybrid_edge_cloud_first_token_ms_sum{{{labels}}} {self.first_token_sum:.3f}")
+                lines.append(f"hybrid_edge_cloud_first_token_ms_count{{{labels}}} {n_ft}")
             lines.append(f"hybrid_edge_escalation_rate{{{labels}}} {(esc / req) if req else 0.0:.4f}")
         return "\n".join(lines) + "\n"
 

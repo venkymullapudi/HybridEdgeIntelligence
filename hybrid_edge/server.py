@@ -60,6 +60,7 @@ class InferResponse(BaseModel):
     latency_ms: float
     edge_latency_ms: Optional[float] = None
     cloud_latency_ms: Optional[float] = None
+    cloud_first_token_ms: Optional[float] = None
     usage: Dict[str, Union[int, float]] = {}
     signals: Optional[Dict[str, Any]] = None
 
@@ -202,7 +203,13 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
             task = asyncio.ensure_future(run())
             try:
                 while True:
-                    ev = await events.get()
+                    try:
+                        ev = await asyncio.wait_for(events.get(), timeout=settings.sse_heartbeat_s)
+                    except asyncio.TimeoutError:
+                        # SSE comment: keeps proxies and clients from timing out an idle
+                        # stream while the edge gates or Claude thinks before its first text.
+                        yield ": ping\n\n"
+                        continue
                     if ev is None:
                         return
                     yield f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"

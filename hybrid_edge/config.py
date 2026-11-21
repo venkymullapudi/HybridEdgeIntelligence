@@ -139,6 +139,8 @@ class Settings:
     # Request limits (reject with 413): stop oversized prompts from burning memory or
     # escalating straight to Claude because they overflow the edge context.
     max_request_chars: int = 100000
+    # Idle gap after which /v1/infer/stream sends an SSE comment heartbeat.
+    sse_heartbeat_s: float = 15.0
     max_messages: int = 200
 
     @classmethod

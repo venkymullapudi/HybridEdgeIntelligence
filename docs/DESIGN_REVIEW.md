@@ -431,6 +431,31 @@ stream opens. A client that disconnects cancels the work, which stops Claude's
 billed stream. `escalating` is sent only when Claude can actually take the
 request.
 
+## 38. Does a streamed escalation survive a slow start?
+
+**Not reliably.** After `escalating`, Claude Opus 5.5 thinks before it writes
+any text, which can take tens of seconds. Before that, edge generation and
+gating take up to `edge_deadline_s`. During those gaps the stream sent no
+bytes, and proxies, mobile networks and client libraries with 30–60 s idle
+timeouts drop silent connections. Those are exactly the long, expensive
+requests streaming was meant to help.
+
+**Fix:** after `sse_heartbeat_s` (default 15 s) of silence, the stream sends an
+SSE comment (`: ping`). SSE clients ignore comments by spec, and intermediaries
+see a live connection.
+
+## 39. Is streaming actually helping?
+
+**Unmeasured.** Streaming exists to cut time-to-first-token on escalations, but
+nothing recorded it. You couldn't tell whether users saw text after 1 s or
+after 40 s of thinking.
+
+**Fix:** streamed escalations report `cloud_first_token_ms` (from the start of
+the Claude call to its first text) in the `done` event. `/metrics` exports a
+`hybrid_edge_cloud_first_token_ms` histogram alongside the end-to-end latency
+histograms. A large gap between the two is what streaming saves. A large
+first-token time means thinking dominates: try a lower `cloud_effort`.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

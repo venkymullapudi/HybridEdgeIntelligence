@@ -48,6 +48,8 @@ class InferenceResult:
     latency_ms: float
     edge_latency_ms: Optional[float] = None
     cloud_latency_ms: Optional[float] = None
+    # Streamed escalations only: time from starting the Claude call to its first text.
+    cloud_first_token_ms: Optional[float] = None
     signals: Optional[Dict[str, Any]] = None
     usage: Dict[str, float] = field(default_factory=dict)
     refused: bool = False
@@ -213,6 +215,8 @@ class HybridOrchestrator:
 
         # ---- escalate -------------------------------------------------------
         streamed = [0]
+        first_token_ms: List[float] = []
+        t_cloud = time.perf_counter()
         try:
             draft = primary.text if primary else None
             if on_event is None:
@@ -223,6 +227,9 @@ class HybridOrchestrator:
                                     "confidence": decision.score if decision else None, "reasons": list(reasons)})
 
                 async def forward(text: str) -> None:
+                    if not first_token_ms:
+                        first_token_ms.append((time.perf_counter() - t_cloud) * 1000)
+                        self.metrics.observe_first_token(first_token_ms[0])
                     streamed[0] += len(text)
                     await on_event({"type": "delta", "text": text})
 
@@ -253,6 +260,7 @@ class HybridOrchestrator:
         result = self._result(rid, t0, cloud.text or (REFUSAL_TEXT if cloud.refused else ""), "cloud", True, False,
                               decision, threshold, reasons, signals, edge_latency, cloud.latency_ms, cloud.model, usage)
         result.refused = cloud.refused
+        result.cloud_first_token_ms = first_token_ms[0] if first_token_ms else None
         self._after(result, messages, primary, cloud, key, caller,
                     cacheable=not cloud.refused and cloud.stop_reason != "max_tokens")
         return result
@@ -373,6 +381,7 @@ class HybridOrchestrator:
     def _copy_shared(self, hit: InferenceResult, t0: float, reason: str, rid: str) -> InferenceResult:
         res = replace(hit, request_id=rid, source="cache", escalated=False, degraded=False,
                       latency_ms=(time.perf_counter() - t0) * 1000, edge_latency_ms=None, cloud_latency_ms=None,
+                      cloud_first_token_ms=None,
                       reasons=[reason])
         avoided = hit.usage.get("cloud_cost_usd") or hit.usage.get("avoided_cost_usd") or 0.0
         res.usage = {"avoided_cost_usd": avoided}
