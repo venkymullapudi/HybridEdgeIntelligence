@@ -25,3 +25,7 @@ output "log_group" {
 output "records_bucket_arn" {
   value = local.records_bucket_arn
 }
+
+output "alarm_topic_arn" {
+  value = aws_sns_topic.alarms.arn
+}

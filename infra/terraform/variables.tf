@@ -164,3 +164,9 @@ variable "edge_system_role" {
     error_message = "edge_system_role must be native or merge."
   }
 }
+
+variable "alarm_emails" {
+  description = "Email addresses notified by every edge's alarms (each must confirm AWS's subscription email)."
+  type        = list(string)
+  default     = []
+}

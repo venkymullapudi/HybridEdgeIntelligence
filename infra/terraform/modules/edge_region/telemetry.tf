@@ -88,6 +88,22 @@ resource "aws_kinesis_firehose_delivery_stream" "records" {
 
 # The gateway emits CloudWatch EMF; alarm when this edge escalates too much
 # (model regression, distribution shift, or a mis-set threshold -> cost spike).
+# Alarms notify this regional topic (alarm actions must be in the alarm's region).
+# Not encrypted with the AWS-managed aws/sns key: its key policy doesn't let
+# CloudWatch publish, so alarm notifications would be silently dropped. Use a
+# customer-managed key that grants cloudwatch.amazonaws.com if you need SSE.
+resource "aws_sns_topic" "alarms" {
+  name = "${local.prefix}-alarms"
+  tags = local.tags
+}
+
+resource "aws_sns_topic_subscription" "alarm_email" {
+  for_each  = toset(var.alarm_emails)
+  topic_arn = aws_sns_topic.alarms.arn
+  protocol  = "email" # each address must confirm the subscription email
+  endpoint  = each.value
+}
+
 resource "aws_cloudwatch_metric_alarm" "escalation_rate" {
   alarm_name          = "${local.prefix}-escalation-rate"
   alarm_description   = "Escalation rate to Claude above ${var.escalation_rate_alarm} for 15 minutes"
@@ -95,6 +111,8 @@ resource "aws_cloudwatch_metric_alarm" "escalation_rate" {
   threshold           = var.escalation_rate_alarm
   evaluation_periods  = 3
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
 
   metric_query {
     id          = "rate"
@@ -108,6 +126,49 @@ resource "aws_cloudwatch_metric_alarm" "escalation_rate" {
     metric {
       namespace   = "HybridEdge"
       metric_name = "Escalations"
+      dimensions  = { Region = local.region }
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  metric_query {
+    id = "req"
+    metric {
+      namespace   = "HybridEdge"
+      metric_name = "Requests"
+      dimensions  = { Region = local.region }
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  tags = local.tags
+}
+
+# Degraded answers are what users feel when Claude is down, throttled or over budget.
+resource "aws_cloudwatch_metric_alarm" "degraded_rate" {
+  alarm_name          = "${local.prefix}-degraded-rate"
+  alarm_description   = "More than ${var.degraded_rate_alarm * 100}% of answers degraded (cloud unavailable) for 15 minutes; see hybrid_edge_cloud_unavailable_total{reason} for why"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.degraded_rate_alarm
+  evaluation_periods  = 3
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+
+  metric_query {
+    id          = "rate"
+    expression  = "IF(req > 20, deg / req, 0)"
+    label       = "Degraded rate"
+    return_data = true
+  }
+
+  metric_query {
+    id = "deg"
+    metric {
+      namespace   = "HybridEdge"
+      metric_name = "Degraded"
       dimensions  = { Region = local.region }
       period      = 300
       stat        = "Sum"

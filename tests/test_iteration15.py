@@ -53,3 +53,13 @@ async def test_shared_degraded_answer_stays_marked_degraded(settings):
     assert a.degraded and b.degraded                                  # not silently "healthy"
     assert any("cloud unavailable" in r for r in b.reasons)
     assert len(fake.calls) == 1                                       # no retry storm into a failing cloud
+
+
+async def test_shared_degraded_copies_count_as_degraded_in_metrics(settings):
+    settings.cloud_breaker_failures = 100
+    fake = FakeClaude(error=anthropic.APIConnectionError(request=httpx.Request("POST", "https://x")))
+    o = make(settings, fake)
+    leader = asyncio.ensure_future(o.infer(Q))
+    await asyncio.sleep(0.01)
+    await asyncio.gather(leader, o.infer(Q))
+    assert o.metrics.counters["degraded_total"] == 2

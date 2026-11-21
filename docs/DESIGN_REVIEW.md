@@ -505,6 +505,30 @@ must not be degraded, and must come from Claude or meet this caller's threshold.
 
 Regression tests fail on the previous code.
 
+## 43. Who hears an alarm?
+
+**No one.** The escalation-rate alarm had no `alarm_actions`, so it could only
+turn red in a console nobody watches. There was no alarm at all on degraded
+answers, the signal users actually feel when Claude is down, throttled or over
+budget. And coalesced degraded copies were counted as healthy in metrics, a
+leftover from question 42.
+
+**Fix:**
+
+* Each edge region gets an SNS topic for its alarms. Alarm actions must be in
+  the alarm's own region. Set `alarm_emails` in Terraform to subscribe
+  addresses; each must confirm AWS's subscription email.
+* Both alarms send `alarm_actions` and `ok_actions` to that topic.
+* A new `degraded-rate` alarm fires above `degraded_rate_alarm` (default 5%)
+  for 15 minutes. Its description points at
+  `cloud_unavailable_total{reason}` for the cause.
+* The topic is deliberately **not** encrypted with the AWS-managed `aws/sns`
+  key: its key policy doesn't let CloudWatch publish, so notifications would be
+  dropped silently. Use a customer-managed key if you need encryption.
+* New static tests guard what `tofu validate` can't check: every alarm has
+  actions, no alarm topic uses `aws/sns`, and the shutdown timings from
+  question 19 stay in order.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

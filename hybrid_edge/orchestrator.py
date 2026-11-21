@@ -408,7 +408,7 @@ class HybridOrchestrator:
                       reasons=[reason] + (list(hit.reasons) if keep_degraded else []))
         avoided = hit.usage.get("cloud_cost_usd") or hit.usage.get("avoided_cost_usd") or 0.0
         res.usage = {"avoided_cost_usd": avoided}
-        self.metrics.observe("cache", False, False, hit.confidence, res.latency_ms, avoided_cost=avoided)
+        self.metrics.observe("cache", False, res.degraded, hit.confidence, res.latency_ms, avoided_cost=avoided)
         return res
 
     def _after(self, result: InferenceResult, messages: List[ChatMessage], primary: Optional[Generation],

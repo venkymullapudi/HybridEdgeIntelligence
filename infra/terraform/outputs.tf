@@ -15,6 +15,7 @@ output "edges" {
       firehose    = m.firehose_stream
       log_group   = m.log_group
       gateway_img = local.gateway_image_in[r]
+      alarm_topic = m.alarm_topic_arn
     }
   }
 }

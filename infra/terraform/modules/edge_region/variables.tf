@@ -153,3 +153,15 @@ variable "edge_system_role" {
   type    = string
   default = "native"
 }
+
+variable "alarm_emails" {
+  description = "Email addresses subscribed to this edge's alarm topic."
+  type        = list(string)
+  default     = []
+}
+
+variable "degraded_rate_alarm" {
+  description = "Alarm when the share of degraded answers stays above this fraction."
+  type        = number
+  default     = 0.05
+}

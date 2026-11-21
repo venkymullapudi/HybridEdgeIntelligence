@@ -14,6 +14,8 @@ cloud_provider = "anthropic" # or "bedrock"
 cloud_model    = "claude-opus-5-5"
 cloud_effort   = "medium"
 
+alarm_emails = ["oncall@example.com"] # each must confirm the AWS subscription email
+
 records_residency = "regional" # or "central"
 shadow_rate       = 0.01
 

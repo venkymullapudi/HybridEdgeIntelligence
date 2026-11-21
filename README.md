@@ -164,6 +164,7 @@ Notes:
 * **TLS:** pass `certificate_arns` (one ACM cert per edge region) for HTTPS on 443. Without them, `terraform plan` stops with an error unless you set `allow_insecure_http = true`, which sends client API keys in cleartext and is only suitable for a demo.
 * **Data residency:** `records_residency = "regional"` (the default) keeps each edge's prompts and answers in a bucket in that edge's own region. `"central"` sends them all to one bucket in `home_region`.
 * **Shadow traffic:** `shadow_rate` (default 0.01) costs roughly that fraction of edge-served traffic in extra Claude calls, capped by `shadow_max_per_min`. Set it to 0 to turn shadowing off. It's ignored, with a startup warning, unless records are kept with their text, since otherwise nothing could be calibrated from them.
+* **Alarms:** each edge alarms on escalation rate and degraded rate, and sends notifications to a regional SNS topic. Set `alarm_emails` to subscribe people, who must confirm AWS's subscription email.
 * **Cost:** each edge runs at least one g6.xlarge GPU node plus a NAT gateway. Set `min_nodes = 0` on regions you only want as burst capacity.
 * **Model choice:** Qwen2.5-7B-Instruct (Apache-2.0) fits on a single L4. For gated models such as Llama, set `enable_hf_token = true` and store your Hugging Face token.
 * The ECR replication configuration is account-wide. Set `manage_ecr_replication = false` if you already manage it somewhere else.
