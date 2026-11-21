@@ -23,8 +23,9 @@ output "ecr_repository_url" {
   value = aws_ecr_repository.gateway.repository_url
 }
 
-output "records_bucket" {
-  value = aws_s3_bucket.records.bucket
+output "records_buckets" {
+  description = "Where escalation records land, per edge region."
+  value       = { for r, m in local.edges : r => m.records_bucket_arn }
 }
 
 output "secrets_to_populate" {

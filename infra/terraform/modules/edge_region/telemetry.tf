@@ -1,4 +1,47 @@
-# Escalation records -> Firehose (regional) -> central S3 bucket, partitioned by region.
+# Escalation records -> Firehose (regional) -> S3, partitioned by region.
+# With no central bucket given, records stay in this region.
+resource "aws_s3_bucket" "records" {
+  count         = var.records_bucket_arn == "" ? 1 : 0
+  bucket_prefix = "${var.name}-records-${local.region}-"
+  tags          = local.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "records" {
+  count                   = length(aws_s3_bucket.records)
+  bucket                  = aws_s3_bucket.records[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "records" {
+  count  = length(aws_s3_bucket.records)
+  bucket = aws_s3_bucket.records[0].id
+  rule {
+    apply_server_side_encryption_by_default { sse_algorithm = "aws:kms" }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "records" {
+  count  = length(aws_s3_bucket.records)
+  bucket = aws_s3_bucket.records[0].id
+  rule {
+    id     = "tier-and-expire"
+    status = "Enabled"
+    filter { prefix = "" }
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+    expiration { days = 365 }
+  }
+}
+
+locals {
+  records_bucket_arn = var.records_bucket_arn != "" ? var.records_bucket_arn : aws_s3_bucket.records[0].arn
+}
+
 resource "aws_iam_role" "firehose" {
   name_prefix = "hei-fh-"
   assume_role_policy = jsonencode({
@@ -19,7 +62,7 @@ resource "aws_iam_role_policy" "firehose" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["s3:AbortMultipartUpload", "s3:GetBucketLocation", "s3:GetObject", "s3:ListBucket", "s3:ListBucketMultipartUploads", "s3:PutObject"]
-      Resource = [var.records_bucket_arn, "${var.records_bucket_arn}/*"]
+      Resource = [local.records_bucket_arn, "${local.records_bucket_arn}/*"]
     }]
   })
 }
@@ -32,7 +75,7 @@ resource "aws_kinesis_firehose_delivery_stream" "records" {
 
   extended_s3_configuration {
     role_arn            = aws_iam_role.firehose.arn
-    bucket_arn          = var.records_bucket_arn
+    bucket_arn          = local.records_bucket_arn
     prefix              = "escalations/region=${local.region}/!{timestamp:yyyy/MM/dd/HH}/"
     error_output_prefix = "errors/region=${local.region}/!{firehose:error-output-type}/!{timestamp:yyyy/MM/dd}/"
     buffering_size      = 64

@@ -27,9 +27,12 @@ and hard requests still get frontier-model quality.
 
 ## How a request flows
 
-1. **Cache.** Repeated prompts are answered from an in-process TTL cache. Cached Claude answers are the most valuable hits.
-2. **Pre-gate.** Requests go straight to Claude when the client sends `route: "cloud"` or the prompt won't fit the edge model's context window.
-3. **Edge generation.** vLLM returns the answer along with per-token logprobs and top-k alternatives. You can also request *k* extra samples for self-consistency.
+1. **Cache and coalescing.** Repeated prompts are answered from an in-process TTL cache. Entries are scoped to the caller's API key, so one tenant never sees another's answers. Identical requests that arrive at the same time share one computation (single-flight), so a burst of the same hard prompt makes one Claude call, not fifty.
+2. **Pre-gate.** Requests go straight to Claude when the client sends `route: "cloud"` (if the policy allows overrides) or the prompt won't fit the edge model's context window.
+3. **Edge generation, streamed.** vLLM streams the answer with per-token logprobs and top-k alternatives, and the gate watches it as it arrives:
+   * **Early abort.** If a window of tokens collapses below `gate_abort_window_prob`, generation stops and the request escalates right away instead of finishing a doomed answer. This only happens when Claude can actually take the request.
+   * **Deadline.** If the edge model is slower than `edge_deadline_s` (for example, a queued GPU), the request escalates instead of waiting.
+   * **Gray-zone self-consistency.** Extra samples are drawn only when the score is within `gate_consistency_band` of τ, which is the only time they can change the decision.
 4. **Confidence gate.** The gate scores the answer in `[0, 1]` from these signals:
    | signal | catches |
    |---|---|
@@ -42,8 +45,11 @@ and hard requests still get frontier-model quality.
    A hand-weighted score is used out of the box. Once you have logged data, a
    **calibrated logistic model** replaces it (see *Calibrating the gate* below).
 5. **Escalate or serve.** If `score ≥ τ`, the edge answer is returned. Otherwise the request goes to Claude (`claude-opus-5-5`, adaptive thinking, effort `medium` by default). Claude's refusal fallbacks are enabled: server-side `fallbacks: "default"` on the Claude API, and the SDK's client-side middleware on Bedrock.
-6. **Degrade, don't fail.** If Claude is down, rate-limited, over budget, or the circuit breaker is open, the edge answer is returned with `degraded: true`. A 503 is returned only when both tiers are down.
-7. **Record.** Every escalation, plus a small sample of confident requests, is written to Firehose → S3 as `(prompt, edge answer, signals, Claude answer)`. This data drives gate calibration and distillation into the edge model, so the escalation rate falls over time.
+6. **Degrade, don't fail.** If Claude is down, rate-limited, over budget, or the circuit breaker is open, the edge answer is returned with `degraded: true`. A 503 is returned only when both tiers are down. After a cooldown the breaker lets **one** probe through (half-open) before it reopens to traffic. Budgets apply per node *and* per API key, so one noisy client can't drain the node.
+7. **Shadow and record.** A small `shadow_rate` of edge-served requests is also sent to Claude **in the background**, without adding latency for the user. Escalations and shadow calls are written to Firehose → S3 (in-region by default) as `(prompt, edge answer, signals, Claude answer)`. Shadow calls matter because without them you would only have reference answers for requests the gate already rejected, and you couldn't calibrate the threshold. This data drives gate calibration and distillation into the edge model, so the escalation rate falls over time.
+8. **Cost accounting.** Each response reports `cloud_cost_usd` or `avoided_cost_usd`, and `/metrics` and CloudWatch keep running totals, so you can see what the edge is saving.
+
+The design was stress-tested question by question. See [docs/DESIGN_REVIEW.md](docs/DESIGN_REVIEW.md) for what was found and fixed.
 
 Each response tells you what happened:
 
@@ -73,6 +79,8 @@ Each response tells you what happened:
 | `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, latency and cloud tokens |
 
 Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set.
+
+Client policy: set `HEI_ALLOW_CLIENT_OVERRIDES=false` to ignore `route` and `min_confidence` from callers. Even when overrides are allowed, `min_confidence` is capped at `max_client_min_confidence` (default 0.95), so a client can't force every request to Claude.
 
 ## Run locally
 
@@ -144,7 +152,9 @@ curl -s "http://$(terraform -chdir=infra/terraform output -raw global_endpoint_d
 
 Notes:
 * **Bedrock instead of an API key:** set `cloud_provider = "bedrock"`. Tasks then call Claude in their own region through IAM. Before you rely on this, check that the model is enabled for your account in every edge region, and that the IAM actions in `modules/edge_region/ecs.tf` match what the Bedrock endpoint you use requires.
-* **TLS:** pass `certificate_arns` (one ACM cert per region) for HTTPS on 443. The default is HTTP on port 80 only, which suits a demo but not production.
+* **TLS:** pass `certificate_arns` (one ACM cert per edge region) for HTTPS on 443. Without them, `terraform plan` stops with an error unless you set `allow_insecure_http = true`, which sends client API keys in cleartext and is only suitable for a demo.
+* **Data residency:** `records_residency = "regional"` (the default) keeps each edge's prompts and answers in a bucket in that edge's own region. `"central"` sends them all to one bucket in `home_region`.
+* **Shadow traffic:** `shadow_rate` (default 0.01) costs roughly that fraction of edge-served traffic in extra Claude calls, capped by `shadow_max_per_min`. Set it to 0 to turn shadowing off.
 * **Cost:** each edge runs at least one g6.xlarge GPU node plus a NAT gateway. Set `min_nodes = 0` on regions you only want as burst capacity.
 * **Model choice:** Qwen2.5-7B-Instruct (Apache-2.0) fits on a single L4. For gated models such as Llama, set `enable_hf_token = true` and store your Hugging Face token.
 * The ECR replication configuration is account-wide. Set `manage_ecr_replication = false` if you already manage it somewhere else.
@@ -153,17 +163,24 @@ Notes:
 
 Choosing τ trades **escalation rate** (cost) against **edge precision** (quality). Once records are flowing:
 
-1. Label each record (`label`: 1 if the edge answer was acceptable, 0 if not). You can do this by human review or with an offline LLM judge comparing `edge_answer` with `cloud_answer`. For a quick start, `--weak-labels` labels by lexical agreement between the two answers.
-2. Fit the calibrator:
+1. Collect records that include **shadow** calls (`shadow_rate > 0`). Without them you only have labels for answers the gate already rejected.
+2. Label them with the Claude judge, which decides whether each edge answer was acceptable using Claude's answer as the reference. Every judged record is a billed call, and `--limit` caps the spend. Human labels in a `label` field work too.
 
    ```bash
-   hybrid-edge-calibrate records.jsonl -o calibration.json --target-precision 0.95
+   hybrid-edge-label records.jsonl -o labelled.jsonl --limit 5000
+   ```
+
+   As a crude fallback, `hybrid-edge-calibrate --weak-labels` labels by lexical overlap instead.
+3. Fit the calibrator:
+
+   ```bash
+   hybrid-edge-calibrate labelled.jsonl -o calibration.json --target-precision 0.95
    ```
 
    ```
    {"rows": 5000, "threshold": 0.62, "edge_coverage": 0.78, "edge_precision": 0.951, "escalation_rate": 0.22}
    ```
-3. Ship `calibration.json` with the gateway and set `HEI_GATE_CALIBRATION_PATH`. Its threshold replaces `gate_threshold`.
+4. Ship `calibration.json` with the gateway and set `HEI_GATE_CALIBRATION_PATH`. Its threshold replaces `gate_threshold`.
 
 The same records double as a distillation set: fine-tune the edge model on `(messages, cloud_answer)` pairs, redeploy it, and recalibrate.
 
@@ -177,7 +194,9 @@ hybrid_edge/
   orchestrator.py  request flow: cache → edge → gate → escalate or degrade
   server.py      FastAPI gateway
   telemetry.py   CloudWatch EMF metrics, Prometheus /metrics, Firehose record sink
-  calibrate.py   fits the gate from logged records
+  calibrate.py   fits the gate from labelled records
+  label.py       Claude judge that labels records for calibration
+docs/            design review (questions, findings, fixes)
 infra/terraform/ multi-region AWS deployment
 docker/          gateway image and local compose setup
 tests/           unit and integration tests (mock edge model, fake Claude client)

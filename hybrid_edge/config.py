@@ -42,13 +42,23 @@ class Settings:
     edge_top_logprobs: int = 5
     edge_timeout_s: float = 30.0
     edge_context_tokens: int = 8192
+    # Escalate instead of waiting when the edge model is slower than this (0 = off).
+    edge_deadline_s: float = 10.0
+    # Stream from the edge model so the gate can abort a doomed answer early.
+    edge_stream: bool = True
 
     # --- confidence gate --------------------------------------------------
     gate_threshold: float = 0.70
     # Extra samples drawn for self-consistency. 0 disables (cheapest).
     gate_consistency_samples: int = 0
     gate_consistency_temperature: float = 0.8
+    # Draw consistency samples only when |score - threshold| < band (gray zone).
+    gate_consistency_band: float = 0.15
     gate_min_window: int = 8
+    # Early abort: stop streaming once a window of tokens falls below this probability
+    # (geometric mean) after gate_abort_min_tokens tokens. 0 disables.
+    gate_abort_window_prob: float = 0.15
+    gate_abort_min_tokens: int = 16
     gate_weights: GateWeights = field(default_factory=GateWeights)
     # Optional JSON produced by `hybrid-edge-calibrate`; replaces the heuristic.
     gate_calibration_path: Optional[str] = None
@@ -67,14 +77,30 @@ class Settings:
     cloud_include_edge_draft: bool = False
     # Cost guard: max escalations per minute per edge node (token bucket). 0 = unlimited.
     cloud_max_escalations_per_min: int = 600
+    # Per API key, so one client can't drain the node budget. 0 = unlimited.
+    cloud_max_escalations_per_key_per_min: int = 120
     cloud_breaker_failures: int = 5
     cloud_breaker_cooldown_s: float = 30.0
+    # USD per million tokens, for cost / avoided-cost metrics (defaults: claude-opus-5-5).
+    cloud_price_in_per_mtok: float = 4.0
+    cloud_price_out_per_mtok: float = 20.0
+
+    # Shadow escalation: fraction of edge-served requests also sent to Claude in the
+    # background, so calibration sees reference answers for *confident* edge answers too.
+    shadow_rate: float = 0.0
+    shadow_max_per_min: int = 30
+
+    # Client controls. When disabled, `route` and `min_confidence` in requests are ignored.
+    allow_client_overrides: bool = True
+    max_client_min_confidence: float = 0.95
 
     system_prompt: str = "You are a helpful, accurate assistant. Answer concisely."
 
     # --- caching ---------------------------------------------------------
     cache_size: int = 10000
     cache_ttl_s: float = 3600.0
+    # Off: cache entries are scoped to the caller's API key (no cross-tenant answers).
+    cache_shared_across_keys: bool = False
 
     # --- telemetry -------------------------------------------------------
     metrics_namespace: str = "HybridEdge"
@@ -130,6 +156,10 @@ class Settings:
             raise ValueError("record_sink must be none|stdout|file|firehose")
         if self.record_sink == "firehose" and not self.record_firehose_stream:
             raise ValueError("record_firehose_stream is required for the firehose sink")
+        for name in ("shadow_rate", "record_sample_rate_confident", "max_client_min_confidence",
+                     "gate_abort_window_prob"):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1]")
         if self.cloud_effort not in ("low", "medium", "high", "xhigh", "max"):
             raise ValueError("cloud_effort must be low|medium|high|xhigh|max")
 

@@ -86,6 +86,8 @@ class ConfidenceGate:
             reasons.append("edge answer hedges")
         if s.truncated:
             reasons.append("edge answer truncated")
+        if s.aborted:
+            reasons.append("edge generation aborted early (confidence collapsed)")
         if not s.has_logprobs:
             reasons.append("no logprobs from edge model")
         if s.consistency_measured and s.consistency < 0.5:
@@ -93,7 +95,7 @@ class ConfidenceGate:
         return GateDecision(
             score=sc,
             threshold=thr,
-            escalate=sc < thr,
+            escalate=sc < thr or s.aborted,
             reasons=reasons,
             method="calibrated" if self.calibrator else "heuristic",
         )

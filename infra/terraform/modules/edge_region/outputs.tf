@@ -21,3 +21,7 @@ output "firehose_stream" {
 output "log_group" {
   value = aws_cloudwatch_log_group.this.name
 }
+
+output "records_bucket_arn" {
+  value = local.records_bucket_arn
+}

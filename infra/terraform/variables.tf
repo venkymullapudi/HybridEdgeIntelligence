@@ -121,3 +121,30 @@ variable "tags" {
   type    = map(string)
   default = { project = "hybrid-edge-intelligence" }
 }
+
+variable "allow_insecure_http" {
+  description = "Allow deploying without TLS (HTTP on port 80). Client API keys then travel in cleartext."
+  type        = bool
+  default     = false
+}
+
+variable "records_residency" {
+  description = "regional: each edge keeps its escalation records in a bucket in its own region (data stays in-region). central: all edges write to one bucket in home_region."
+  type        = string
+  default     = "regional"
+  validation {
+    condition     = contains(["regional", "central"], var.records_residency)
+    error_message = "records_residency must be regional or central."
+  }
+}
+
+variable "shadow_rate" {
+  description = "Fraction of edge-served requests also sent to Claude in the background, to collect calibration labels."
+  type        = number
+  default     = 0.01
+}
+
+variable "max_escalations_per_key_per_min" {
+  type    = number
+  default = 120
+}

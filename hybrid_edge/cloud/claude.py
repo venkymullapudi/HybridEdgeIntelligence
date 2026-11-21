@@ -1,16 +1,18 @@
 """Escalation target: Claude, via the Claude API or Amazon Bedrock.
 
-Only reached when the confidence gate rejects the edge answer, so every call
-here is a deliberate spend. Includes:
+Only reached when the confidence gate rejects the edge answer (or for a sampled
+shadow call), so every call here is a deliberate spend. Includes:
   * refusal fallbacks (server-side on the Claude API, client-side middleware on Bedrock)
-  * a circuit breaker, so a cloud outage degrades to edge answers instead of timeouts
-  * a token-bucket budget, so a misconfigured gate can't run up an unbounded bill
+  * a circuit breaker with a real half-open state, so a cloud outage degrades
+    to edge answers instead of timeouts
+  * token-bucket budgets per node, per API key, and for shadow traffic
+  * per-call cost estimates
 """
 
 from __future__ import annotations
 
-import asyncio
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -36,6 +38,7 @@ class CloudAnswer:
     input_tokens: int
     output_tokens: int
     latency_ms: float
+    cost_usd: float = 0.0
     refused: bool = False
     fallback_used: bool = False
 
@@ -47,73 +50,152 @@ class TokenBucket:
         self.rate = per_minute / 60.0
         self.last = time.monotonic()
 
-    def take(self) -> bool:
-        if self.capacity <= 0:
-            return True  # unlimited
+    def _refill(self) -> None:
         now = time.monotonic()
         self.tokens = min(self.capacity, self.tokens + (now - self.last) * self.rate)
         self.last = now
+
+    def available(self) -> bool:
+        if self.capacity <= 0:
+            return True  # unlimited
+        self._refill()
+        return self.tokens >= 1.0
+
+    def take(self) -> bool:
+        if self.capacity <= 0:
+            return True
+        self._refill()
         if self.tokens >= 1.0:
             self.tokens -= 1.0
             return True
         return False
 
+    def refund(self) -> None:
+        if self.capacity > 0:
+            self.tokens = min(self.capacity, self.tokens + 1.0)
+
 
 class CircuitBreaker:
+    """closed -> (N failures) -> open -> (cooldown) -> half-open: one probe -> closed | open."""
+
     def __init__(self, failures: int, cooldown_s: float):
         self.threshold = failures
         self.cooldown_s = cooldown_s
         self.failures = 0
         self.opened_at: Optional[float] = None
+        self.probe_in_flight = False
+
+    @property
+    def state(self) -> str:
+        if self.opened_at is None:
+            return "closed"
+        if time.monotonic() - self.opened_at >= self.cooldown_s:
+            return "half_open"
+        return "open"
 
     @property
     def open(self) -> bool:
-        if self.opened_at is None:
-            return False
-        if time.monotonic() - self.opened_at >= self.cooldown_s:
-            return False  # half-open: let one request probe
-        return True
+        """True when a request would be rejected right now."""
+        st = self.state
+        return st == "open" or (st == "half_open" and self.probe_in_flight)
+
+    def allow(self) -> bool:
+        st = self.state
+        if st == "closed":
+            return True
+        if st == "half_open" and not self.probe_in_flight:
+            self.probe_in_flight = True
+            return True
+        return False
 
     def success(self) -> None:
         self.failures = 0
         self.opened_at = None
+        self.probe_in_flight = False
 
     def failure(self) -> None:
         self.failures += 1
-        if self.failures >= self.threshold:
-            self.opened_at = time.monotonic()
+        self.probe_in_flight = False
+        if self.opened_at is not None or self.failures >= self.threshold:
+            self.opened_at = time.monotonic()  # (re-)open
+
+    def release(self) -> None:
+        """A probe ended without reaching the cloud (e.g. budget denied after allow())."""
+        self.probe_in_flight = False
+
+
+class KeyedBuckets:
+    """Bounded LRU of per-caller token buckets."""
+
+    def __init__(self, per_minute: int, max_keys: int = 10000):
+        self.per_minute = per_minute
+        self.max_keys = max_keys
+        self._buckets: "OrderedDict[str, TokenBucket]" = OrderedDict()
+
+    def get(self, key: str) -> TokenBucket:
+        b = self._buckets.get(key)
+        if b is None:
+            b = TokenBucket(self.per_minute)
+            self._buckets[key] = b
+            while len(self._buckets) > self.max_keys:
+                self._buckets.popitem(last=False)
+        else:
+            self._buckets.move_to_end(key)
+        return b
+
+
+def build_claude_client(settings: Settings) -> Any:
+    if settings.cloud_provider == "none":
+        return None
+    if settings.cloud_provider == "bedrock":
+        middleware = []
+        if settings.cloud_refusal_fallbacks:
+            middleware.append(anthropic.BetaRefusalFallbackMiddleware([{"model": BEDROCK_FALLBACK_MODEL}]))
+        return anthropic.AsyncAnthropicBedrockMantle(
+            aws_region=settings.cloud_aws_region or settings.region,
+            timeout=settings.cloud_timeout_s,
+            middleware=middleware,
+        )
+    # Credentials resolve from ANTHROPIC_API_KEY (injected from Secrets Manager on AWS).
+    return anthropic.AsyncAnthropic(timeout=settings.cloud_timeout_s, max_retries=2)
+
+
+def model_id(settings: Settings) -> str:
+    m = settings.cloud_model
+    if settings.cloud_provider == "bedrock" and not m.startswith("anthropic."):
+        m = "anthropic." + m
+    return m
+
+
+def fallback_kwargs(settings: Settings) -> Dict[str, Any]:
+    if settings.cloud_refusal_fallbacks and settings.cloud_provider == "anthropic":
+        return {"betas": [FALLBACK_BETA], "fallbacks": "default"}
+    return {}
+
+
+def estimate_cost(settings: Settings, input_tokens: int, output_tokens: int) -> float:
+    return (input_tokens * settings.cloud_price_in_per_mtok + output_tokens * settings.cloud_price_out_per_mtok) / 1e6
 
 
 class ClaudeEscalator:
     def __init__(self, settings: Settings, client: Any = None):
         self.s = settings
         self.provider = settings.cloud_provider
-        self.model = settings.cloud_model
-        if self.provider == "bedrock" and not self.model.startswith("anthropic."):
-            self.model = "anthropic." + self.model
-        self.client = client if client is not None else self._build_client()
+        self.model = model_id(settings)
+        self.client = client if client is not None else build_claude_client(settings)
         self.bucket = TokenBucket(settings.cloud_max_escalations_per_min)
+        self.key_buckets = KeyedBuckets(settings.cloud_max_escalations_per_key_per_min)
+        self.shadow_bucket = TokenBucket(settings.shadow_max_per_min)
         self.breaker = CircuitBreaker(settings.cloud_breaker_failures, settings.cloud_breaker_cooldown_s)
-        self._lock = asyncio.Lock()
 
     @property
     def enabled(self) -> bool:
         return self.provider != "none"
 
-    def _build_client(self) -> Any:
-        if self.provider == "none":
-            return None
-        if self.provider == "bedrock":
-            middleware = []
-            if self.s.cloud_refusal_fallbacks:
-                middleware.append(anthropic.BetaRefusalFallbackMiddleware([{"model": BEDROCK_FALLBACK_MODEL}]))
-            return anthropic.AsyncAnthropicBedrockMantle(
-                aws_region=self.s.cloud_aws_region or self.s.region,
-                timeout=self.s.cloud_timeout_s,
-                middleware=middleware,
-            )
-        # Credentials resolve from ANTHROPIC_API_KEY (injected from Secrets Manager on AWS).
-        return anthropic.AsyncAnthropic(timeout=self.s.cloud_timeout_s, max_retries=2)
+    def can_escalate(self, caller: str = "anon") -> bool:
+        """Cheap pre-check (consumes nothing): would an escalation be attempted right now?"""
+        return (self.enabled and not self.breaker.open and self.bucket.available()
+                and self.key_buckets.get(caller).available())
 
     def _request(self, messages: List[ChatMessage], edge_draft: Optional[str]) -> Dict[str, Any]:
         system = self.s.system_prompt
@@ -143,31 +225,45 @@ class ClaudeEscalator:
             "messages": convo,
             "output_config": {"effort": self.s.cloud_effort},
         }
-        if self.s.cloud_refusal_fallbacks and self.provider == "anthropic":
-            req["betas"] = [FALLBACK_BETA]
-            req["fallbacks"] = "default"
+        req.update(fallback_kwargs(self.s))
         return req
 
-    async def answer(self, messages: List[ChatMessage], edge_draft: Optional[str] = None) -> CloudAnswer:
+    async def answer(self, messages: List[ChatMessage], edge_draft: Optional[str] = None,
+                     caller: str = "anon", shadow: bool = False) -> CloudAnswer:
         if not self.enabled:
             raise CloudUnavailable("cloud escalation disabled")
-        if self.breaker.open:
-            raise CloudUnavailable("circuit breaker open")
-        async with self._lock:
-            allowed = self.bucket.take()
-        if not allowed:
-            raise CloudUnavailable("escalation budget exhausted")
+        if shadow:
+            # Shadow traffic is optional: never probe a half-open breaker with it.
+            if self.breaker.state != "closed":
+                raise CloudUnavailable("circuit breaker not closed")
+            if not self.shadow_bucket.take():
+                raise CloudUnavailable("shadow budget exhausted")
+        else:
+            if not self.breaker.allow():
+                raise CloudUnavailable("circuit breaker open")
+            key_bucket = self.key_buckets.get(caller)
+            if not key_bucket.take():
+                self.breaker.release()
+                raise CloudUnavailable("per-key escalation budget exhausted")
+            if not self.bucket.take():
+                key_bucket.refund()
+                self.breaker.release()
+                raise CloudUnavailable("escalation budget exhausted")
 
-        req = self._request(messages, edge_draft)
+        req = self._request(messages, None if shadow else edge_draft)
         t0 = time.perf_counter()
         try:
             resp = await self.client.beta.messages.create(**req)
         except anthropic.BadRequestError as exc:
             # A malformed request is our bug, not a cloud outage: don't trip the breaker.
+            self.breaker.release()
             raise CloudUnavailable(f"cloud rejected request: {exc}") from exc
         except (anthropic.RateLimitError, anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
             self.breaker.failure()
             raise CloudUnavailable(f"cloud error: {type(exc).__name__}: {exc}") from exc
+        except BaseException:
+            self.breaker.release()  # e.g. cancelled: don't leave a probe stuck in flight
+            raise
         self.breaker.success()
         latency_ms = (time.perf_counter() - t0) * 1000
 
@@ -175,15 +271,17 @@ class ClaudeEscalator:
         fallback_used = any(getattr(b, "type", None) == "fallback" for b in resp.content)
         iterations = getattr(resp.usage, "iterations", None) or []
         fallback_used = fallback_used or any(getattr(i, "type", None) == "fallback_message" for i in iterations)
-        refused = resp.stop_reason == "refusal"
+        in_tok = int(getattr(resp.usage, "input_tokens", 0) or 0)
+        out_tok = int(getattr(resp.usage, "output_tokens", 0) or 0)
         return CloudAnswer(
             text=text,
             model=getattr(resp, "model", self.model),
             stop_reason=resp.stop_reason or "",
-            input_tokens=int(getattr(resp.usage, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(resp.usage, "output_tokens", 0) or 0),
+            input_tokens=in_tok,
+            output_tokens=out_tok,
             latency_ms=latency_ms,
-            refused=refused,
+            cost_usd=estimate_cost(self.s, in_tok, out_tok),
+            refused=resp.stop_reason == "refusal",
             fallback_used=fallback_used,
         )
 

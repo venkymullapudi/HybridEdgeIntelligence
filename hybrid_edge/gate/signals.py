@@ -37,6 +37,7 @@ class Signals:
     consistency_measured: bool = False
     hedge: bool = False
     truncated: bool = False
+    aborted: bool = False
     n_tokens: int = 0
     has_logprobs: bool = True
 
@@ -135,6 +136,7 @@ def compute_signals(primary: Generation, samples: Sequence[Generation], window: 
         consistency_measured=bool(samples),
         hedge=is_hedged(primary.text),
         truncated=primary.finish_reason == "length",
+        aborted=primary.finish_reason == "aborted",
         n_tokens=primary.completion_tokens or len(toks),
         has_logprobs=has_lp,
     )

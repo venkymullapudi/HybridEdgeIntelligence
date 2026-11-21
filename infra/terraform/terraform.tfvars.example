@@ -14,8 +14,14 @@ cloud_provider = "anthropic" # or "bedrock"
 cloud_model    = "claude-opus-5-5"
 cloud_effort   = "medium"
 
+records_residency = "regional" # or "central"
+shadow_rate       = 0.01
+
+# Either give one ACM certificate per edge region (recommended) ...
 # certificate_arns = {
 #   "us-east-1"  = "arn:aws:acm:us-east-1:123456789012:certificate/..."
 #   "eu-west-1"  = "arn:aws:acm:eu-west-1:123456789012:certificate/..."
 #   "ap-south-1" = "arn:aws:acm:ap-south-1:123456789012:certificate/..."
 # }
+# ... or explicitly accept cleartext HTTP for a demo:
+# allow_insecure_http = true

@@ -115,6 +115,9 @@ async def test_edge_down_escalates_and_both_down_raises(settings):
         async def generate(self, *a, **k):
             raise EdgeBackendError("gpu on fire")
 
+        async def generate_stream(self, *a, **k):
+            raise EdgeBackendError("gpu on fire")
+
         async def ready(self):
             return False
 
@@ -136,6 +139,7 @@ async def test_edge_down_escalates_and_both_down_raises(settings):
 
 async def test_consistency_sampling_lowers_score_on_disagreement(settings, fake_claude):
     settings.gate_consistency_samples = 3
+    settings.gate_consistency_band = 1.0  # always in the gray zone
     o = build_orchestrator(settings, escalator=ClaudeEscalator(settings, client=fake_claude),
                            records=MemorySink(settings))
     r = await o.infer(user("hard"))

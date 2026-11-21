@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import math
+import random
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .backends.base import ChatMessage, EdgeBackend, EdgeBackendError, Generation, estimate_tokens
+from .backends.base import ChatMessage, EdgeBackend, EdgeBackendError, Generation, TokenInfo, estimate_tokens
 from .cache import TTLCache, cache_key
-from .cloud.claude import ClaudeEscalator, CloudAnswer, CloudUnavailable
+from .cloud.claude import ClaudeEscalator, CloudAnswer, CloudUnavailable, estimate_cost
 from .config import Settings
 from .gate.confidence import ConfidenceGate, GateDecision
 from .gate.signals import Signals, compute_signals
@@ -20,6 +23,7 @@ from .telemetry import Metrics, RecordSink
 log = logging.getLogger("hybrid_edge")
 
 REFUSAL_TEXT = "I can't help with that request."
+ANON = "anon"
 
 
 class ServiceUnavailable(RuntimeError):
@@ -43,8 +47,15 @@ class InferenceResult:
     edge_latency_ms: Optional[float] = None
     cloud_latency_ms: Optional[float] = None
     signals: Optional[Dict[str, Any]] = None
-    usage: Dict[str, int] = field(default_factory=dict)
+    usage: Dict[str, float] = field(default_factory=dict)
     refused: bool = False
+
+
+def caller_id(api_key: Optional[str]) -> str:
+    """Stable, non-reversible identifier for budgets, cache scoping and records."""
+    if not api_key:
+        return ANON
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
 
 
 class HybridOrchestrator:
@@ -64,7 +75,10 @@ class HybridOrchestrator:
         self.metrics = metrics
         self.records = records
         self.cache: TTLCache[InferenceResult] = TTLCache(settings.cache_size, settings.cache_ttl_s)
+        self._inflight: Dict[str, "asyncio.Future[InferenceResult]"] = {}
+        self._background: Set["asyncio.Task[Any]"] = set()
 
+    # ------------------------------------------------------------------ public
     async def infer(
         self,
         messages: List[ChatMessage],
@@ -73,22 +87,60 @@ class HybridOrchestrator:
         min_confidence: Optional[float] = None,
         max_tokens: Optional[int] = None,
         use_cache: bool = True,
+        caller: str = ANON,
     ) -> InferenceResult:
         t0 = time.perf_counter()
-        rid = uuid.uuid4().hex
         if not any(m.role != "system" for m in messages):
             messages = messages + [ChatMessage("user", "")]
         if not any(m.role == "system" for m in messages):
             messages = [ChatMessage("system", self.s.system_prompt)] + messages
-        threshold = self.gate.threshold if min_confidence is None else min_confidence
-        key = cache_key(messages, self.s.edge_model, max_tokens or self.s.edge_max_tokens)
 
-        if use_cache and route == "auto":
+        policy_notes: List[str] = []
+        if not self.s.allow_client_overrides:
+            if route != "auto" or min_confidence is not None:
+                policy_notes.append("client overrides disabled by policy")
+            route, min_confidence = "auto", None
+        elif min_confidence is not None and min_confidence > self.s.max_client_min_confidence:
+            policy_notes.append(f"min_confidence capped at {self.s.max_client_min_confidence}")
+            min_confidence = self.s.max_client_min_confidence
+        threshold = self.gate.threshold if min_confidence is None else min_confidence
+
+        scope = "shared" if self.s.cache_shared_across_keys else caller
+        key = cache_key(messages, self.s.edge_model, max_tokens or self.s.edge_max_tokens, scope)
+        cacheable_route = use_cache and route == "auto"
+
+        if cacheable_route:
             hit = self.cache.get(key)
             if hit is not None and (hit.source == "cloud" or (hit.confidence or 0) >= threshold):
-                return self._finish_cached(hit, rid, t0)
+                return self._copy_shared(hit, t0, "cache hit (originally served by %s)" % hit.source)
+            # Single-flight: identical concurrent requests share one computation.
+            pending = self._inflight.get(key)
+            if pending is not None:
+                res = await asyncio.shield(pending)
+                return self._copy_shared(res, t0, "coalesced with an identical in-flight request")
+            fut: "asyncio.Future[InferenceResult]" = asyncio.get_running_loop().create_future()
+            self._inflight[key] = fut
+            try:
+                res = await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes)
+                fut.set_result(res)
+                return res
+            except BaseException as exc:
+                fut.set_exception(exc)
+                fut.exception()  # mark retrieved, so waiter-less failures don't log noise
+                raise
+            finally:
+                self._inflight.pop(key, None)
+        return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes)
 
-        reasons: List[str] = []
+    async def drain(self) -> None:
+        """Wait for background (shadow) work; used on shutdown and in tests."""
+        while self._background:
+            await asyncio.gather(*list(self._background), return_exceptions=True)
+
+    # ---------------------------------------------------------------- internal
+    async def _infer(self, messages, route, threshold, max_tokens, caller, key, t0, policy_notes) -> InferenceResult:
+        rid = uuid.uuid4().hex
+        reasons: List[str] = list(policy_notes)
         primary: Optional[Generation] = None
         signals: Optional[Signals] = None
         decision: Optional[GateDecision] = None
@@ -106,10 +158,8 @@ class HybridOrchestrator:
         # ---- edge -----------------------------------------------------------
         if not skip_edge:
             try:
-                primary, samples = await self._edge_generate(messages, max_tokens)
+                primary, signals, decision = await self._edge(messages, max_tokens, threshold, route, caller)
                 edge_latency = primary.latency_ms
-                signals = compute_signals(primary, samples, self.s.gate_min_window)
-                decision = self.gate.decide(signals, threshold)
                 reasons.extend(decision.reasons)
             except EdgeBackendError as exc:
                 log.warning("edge backend failed: %s", exc)
@@ -124,57 +174,125 @@ class HybridOrchestrator:
 
         # ---- serve from edge ------------------------------------------------
         if not must_escalate and primary is not None:
+            usage = self._edge_usage(primary)
+            usage["avoided_cost_usd"] = estimate_cost(self.s, primary.prompt_tokens, primary.completion_tokens)
             result = self._result(rid, t0, primary.text, "edge", False, False, decision, threshold, reasons,
-                                  signals, edge_latency, None, self.s.edge_model,
-                                  {"edge_prompt_tokens": primary.prompt_tokens,
-                                   "edge_completion_tokens": primary.completion_tokens})
-            self._after(result, messages, primary, None, key, cacheable=decision is not None)
+                                  signals, edge_latency, None, self.s.edge_model, usage)
+            self._after(result, messages, primary, None, key, caller, cacheable=decision is not None)
+            self._maybe_shadow(result, messages, primary, caller)
             return result
 
         # ---- escalate -------------------------------------------------------
         try:
-            cloud = await self.escalator.answer(messages, primary.text if primary else None)
+            cloud = await self.escalator.answer(messages, primary.text if primary else None, caller=caller)
         except CloudUnavailable as exc:
             reasons.append(f"cloud unavailable: {exc}")
             self.metrics.incr("cloud_errors_total")
             if primary is None:
                 raise ServiceUnavailable("; ".join(reasons)) from exc
             result = self._result(rid, t0, primary.text, "edge", True, True, decision, threshold, reasons,
-                                  signals, edge_latency, None, self.s.edge_model,
-                                  {"edge_prompt_tokens": primary.prompt_tokens,
-                                   "edge_completion_tokens": primary.completion_tokens})
-            self._after(result, messages, primary, None, key, cacheable=False)
+                                  signals, edge_latency, None, self.s.edge_model, self._edge_usage(primary))
+            self._after(result, messages, primary, None, key, caller, cacheable=False)
             return result
 
         if cloud.refused:
             reasons.append("cloud model declined the request")
-        usage = {"cloud_input_tokens": cloud.input_tokens, "cloud_output_tokens": cloud.output_tokens}
-        if primary is not None:
-            usage.update({"edge_prompt_tokens": primary.prompt_tokens,
-                          "edge_completion_tokens": primary.completion_tokens})
         if cloud.fallback_used:
             reasons.append(f"served by fallback model {cloud.model}")
+        usage: Dict[str, float] = {"cloud_input_tokens": cloud.input_tokens,
+                                   "cloud_output_tokens": cloud.output_tokens,
+                                   "cloud_cost_usd": round(cloud.cost_usd, 6)}
+        if primary is not None:
+            usage.update(self._edge_usage(primary))
         result = self._result(rid, t0, cloud.text or (REFUSAL_TEXT if cloud.refused else ""), "cloud", True, False,
                               decision, threshold, reasons, signals, edge_latency, cloud.latency_ms, cloud.model, usage)
         result.refused = cloud.refused
-        self._after(result, messages, primary, cloud, key, cacheable=not cloud.refused and cloud.stop_reason != "max_tokens")
+        self._after(result, messages, primary, cloud, key, caller,
+                    cacheable=not cloud.refused and cloud.stop_reason != "max_tokens")
         return result
 
-    async def _edge_generate(self, messages: List[ChatMessage], max_tokens: Optional[int]):
+    async def _edge(self, messages, max_tokens, threshold, route, caller) -> Tuple[Generation, Signals, GateDecision]:
         mt = max_tokens or self.s.edge_max_tokens
-        primary_task = self.backend.generate(
-            messages, max_tokens=mt, temperature=self.s.edge_temperature, n=1, top_logprobs=self.s.edge_top_logprobs
-        )
+        # Only abort early when the answer can actually be escalated; otherwise a
+        # complete (if shaky) edge answer beats a truncated one.
+        abort = self._abort_check() if route == "auto" and self.escalator.can_escalate(caller) else None
+
+        async def run() -> Generation:
+            if self.s.edge_stream:
+                return await self.backend.generate_stream(
+                    messages, max_tokens=mt, temperature=self.s.edge_temperature,
+                    top_logprobs=self.s.edge_top_logprobs, should_abort=abort)
+            gens = await self.backend.generate(messages, max_tokens=mt, temperature=self.s.edge_temperature,
+                                               n=1, top_logprobs=self.s.edge_top_logprobs)
+            return gens[0]
+
+        t0 = time.perf_counter()
+        if self.s.edge_deadline_s > 0 and route != "edge":
+            try:
+                primary = await asyncio.wait_for(run(), timeout=self.s.edge_deadline_s)
+            except asyncio.TimeoutError as exc:
+                self.metrics.incr("edge_deadline_exceeded_total")
+                raise EdgeBackendError(f"edge deadline of {self.s.edge_deadline_s}s exceeded") from exc
+        else:
+            primary = await run()
+        primary.latency_ms = (time.perf_counter() - t0) * 1000
+        if primary.finish_reason == "aborted":
+            self.metrics.incr("edge_aborted_total")
+
+        signals = compute_signals(primary, [], self.s.gate_min_window)
+        decision = self.gate.decide(signals, threshold)
+
+        # Gray-zone self-consistency: extra samples only when they could flip the decision.
         k = self.s.gate_consistency_samples
-        if k > 0:
-            sample_task = self.backend.generate(
-                messages, max_tokens=mt, temperature=self.s.gate_consistency_temperature, n=k,
-                top_logprobs=self.s.edge_top_logprobs,
-            )
-            prim, samples = await asyncio.gather(primary_task, sample_task)
-            return prim[0], samples
-        prim = await primary_task
-        return prim[0], []
+        if k > 0 and not signals.aborted and abs(decision.score - threshold) < self.s.gate_consistency_band:
+            try:
+                samples = await self.backend.generate(
+                    messages, max_tokens=mt, temperature=self.s.gate_consistency_temperature, n=k,
+                    top_logprobs=self.s.edge_top_logprobs)
+                signals = compute_signals(primary, samples, self.s.gate_min_window)
+                decision = self.gate.decide(signals, threshold)
+                self.metrics.incr("consistency_sampled_total")
+            except EdgeBackendError as exc:
+                log.warning("consistency sampling failed: %s", exc)
+        return primary, signals, decision
+
+    def _abort_check(self):
+        prob = self.s.gate_abort_window_prob
+        if prob <= 0:
+            return None
+        w = max(1, self.s.gate_min_window)
+        min_tokens = max(self.s.gate_abort_min_tokens, w)
+        log_floor = math.log(prob)
+
+        def check(tokens: List[TokenInfo]) -> bool:
+            if len(tokens) < min_tokens:
+                return False
+            recent = tokens[-w:]
+            return sum(t.logprob for t in recent) / len(recent) < log_floor
+
+        return check
+
+    def _maybe_shadow(self, result: InferenceResult, messages, primary: Generation, caller: str) -> None:
+        if self.s.shadow_rate <= 0 or not self.escalator.enabled or random.random() >= self.s.shadow_rate:
+            return
+
+        async def shadow() -> None:
+            try:
+                cloud = await self.escalator.answer(messages, None, caller=caller, shadow=True)
+            except CloudUnavailable as exc:
+                log.debug("shadow skipped: %s", exc)
+                return
+            self.metrics.incr("shadow_total")
+            self.metrics.incr("cloud_cost_usd_total", cloud.cost_usd)
+            self.records.submit(self._record(result, messages, primary, cloud, caller, shadow=True))
+
+        task = asyncio.ensure_future(shadow())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    @staticmethod
+    def _edge_usage(primary: Generation) -> Dict[str, float]:
+        return {"edge_prompt_tokens": primary.prompt_tokens, "edge_completion_tokens": primary.completion_tokens}
 
     def _result(self, rid, t0, answer, source, escalated, degraded, decision, threshold, reasons, signals,
                 edge_latency, cloud_latency, model, usage) -> InferenceResult:
@@ -197,50 +315,48 @@ class HybridOrchestrator:
             usage=usage,
         )
 
-    def _finish_cached(self, hit: InferenceResult, rid: str, t0: float) -> InferenceResult:
-        res = InferenceResult(**{**hit.__dict__})
-        res.request_id = rid
-        res.source = "cache"
-        res.escalated = False
-        res.degraded = False
-        res.latency_ms = (time.perf_counter() - t0) * 1000
-        res.edge_latency_ms = None
-        res.cloud_latency_ms = None
-        res.usage = {}
-        res.reasons = ["cache hit (originally served by %s)" % hit.source]
-        self.metrics.observe("cache", False, False, hit.confidence, res.latency_ms)
+    def _copy_shared(self, hit: InferenceResult, t0: float, reason: str) -> InferenceResult:
+        res = replace(hit, request_id=uuid.uuid4().hex, source="cache", escalated=False, degraded=False,
+                      latency_ms=(time.perf_counter() - t0) * 1000, edge_latency_ms=None, cloud_latency_ms=None,
+                      reasons=[reason])
+        avoided = hit.usage.get("cloud_cost_usd") or hit.usage.get("avoided_cost_usd") or 0.0
+        res.usage = {"avoided_cost_usd": avoided}
+        self.metrics.observe("cache", False, False, hit.confidence, res.latency_ms, avoided_cost=avoided)
         return res
 
     def _after(self, result: InferenceResult, messages: List[ChatMessage], primary: Optional[Generation],
-               cloud: Optional[CloudAnswer], key: str, cacheable: bool) -> None:
-        cloud_tokens = (cloud.input_tokens + cloud.output_tokens) if cloud else 0
-        self.metrics.observe(result.source, result.escalated, result.degraded, result.confidence,
-                             result.latency_ms, cloud_tokens)
+               cloud: Optional[CloudAnswer], key: str, caller: str, cacheable: bool) -> None:
+        self.metrics.observe(
+            result.source, result.escalated, result.degraded, result.confidence, result.latency_ms,
+            cloud_tokens=(cloud.input_tokens + cloud.output_tokens) if cloud else 0,
+            cloud_cost=cloud.cost_usd if cloud else 0.0,
+            avoided_cost=float(result.usage.get("avoided_cost_usd", 0.0)),
+        )
         if cacheable:
             self.cache.put(key, result)
         if self.records.should_record(result.escalated):
-            self.records.submit({
-                "ts": time.time(),
-                "request_id": result.request_id,
-                "region": self.s.region,
-                "edge_id": self.s.edge_id,
-                "edge_model": self.s.edge_model,
-                "cloud_model": cloud.model if cloud else None,
-                "escalated": result.escalated,
-                "degraded": result.degraded,
-                "confidence": result.confidence,
-                "threshold": result.threshold,
-                "reasons": result.reasons,
-                "signals": result.signals,
-                "features": None if result.signals is None else _features(result.signals),
-                "messages": [m.__dict__ for m in messages],
-                "edge_answer": primary.text if primary else None,
-                "cloud_answer": cloud.text if cloud else None,
-                "cloud_refused": cloud.refused if cloud else None,
-                "usage": result.usage,
-            })
+            self.records.submit(self._record(result, messages, primary, cloud, caller, shadow=False))
 
-
-def _features(signals: Dict[str, Any]) -> Dict[str, float]:
-    s = Signals(**signals)
-    return s.vector()
+    def _record(self, result, messages, primary, cloud, caller, shadow) -> Dict[str, Any]:
+        return {
+            "ts": time.time(),
+            "request_id": result.request_id,
+            "region": self.s.region,
+            "edge_id": self.s.edge_id,
+            "caller": caller,
+            "edge_model": self.s.edge_model,
+            "cloud_model": cloud.model if cloud else None,
+            "escalated": result.escalated,
+            "shadow": shadow,
+            "degraded": result.degraded,
+            "confidence": result.confidence,
+            "threshold": result.threshold,
+            "reasons": result.reasons,
+            "signals": result.signals,
+            "features": None if result.signals is None else Signals(**result.signals).vector(),
+            "messages": [m.__dict__ for m in messages],
+            "edge_answer": primary.text if primary else None,
+            "cloud_answer": cloud.text if cloud else None,
+            "cloud_refused": cloud.refused if cloud else None,
+            "usage": result.usage,
+        }

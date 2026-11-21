@@ -100,8 +100,9 @@ variable "gateway_api_keys_secret_arn" {
 }
 
 variable "records_bucket_arn" {
-  description = "Central S3 bucket for escalation records (distillation + gate calibration data)."
+  description = "S3 bucket for escalation records. Empty = create a bucket in this region (data residency)."
   type        = string
+  default     = ""
 }
 
 variable "record_include_text" {
@@ -130,4 +131,14 @@ variable "escalation_rate_alarm" {
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+variable "shadow_rate" {
+  type    = number
+  default = 0.0
+}
+
+variable "max_escalations_per_key_per_min" {
+  type    = number
+  default = 120
 }

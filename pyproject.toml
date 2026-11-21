@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hybrid-edge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hybrid edge intelligence: open-weight models at AWS edges, escalating to Claude only when a confidence gate says so."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -24,6 +24,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23", "boto3>=1.34"]
 [project.scripts]
 hybrid-edge = "hybrid_edge.server:main"
 hybrid-edge-calibrate = "hybrid_edge.calibrate:main"
+hybrid-edge-label = "hybrid_edge.label:main"
 
 [tool.setuptools.packages.find]
 include = ["hybrid_edge*"]
@@ -31,3 +32,4 @@ include = ["hybrid_edge*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"

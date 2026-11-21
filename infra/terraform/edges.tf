@@ -17,6 +17,9 @@ locals {
     max_escalations_per_min  = var.max_escalations_per_min
     record_include_text      = var.record_include_text
     ingress_cidrs            = var.ingress_cidrs
+    shadow_rate              = var.shadow_rate
+    per_key                  = var.max_escalations_per_key_per_min
+    records_bucket_arn       = var.records_residency == "central" ? aws_s3_bucket.records[0].arn : ""
   }
 }
 
@@ -25,27 +28,29 @@ module "edge_us_east_1" {
   count     = contains(var.edge_regions, "us-east-1") ? 1 : 0
   providers = { aws = aws.us_east_1 }
 
-  name                        = local.edge_args.name
-  vllm_image                  = local.edge_args.vllm_image
-  edge_model                  = local.edge_args.edge_model
-  instance_type               = local.edge_args.instance_type
-  min_nodes                   = local.edge_args.min_nodes
-  max_nodes                   = local.edge_args.max_nodes
-  gate_threshold              = local.edge_args.gate_threshold
-  gate_consistency_samples    = local.edge_args.gate_consistency_samples
-  cloud_provider              = local.edge_args.cloud_provider
-  cloud_model                 = local.edge_args.cloud_model
-  cloud_effort                = local.edge_args.cloud_effort
-  max_escalations_per_min     = local.edge_args.max_escalations_per_min
-  record_include_text         = local.edge_args.record_include_text
-  ingress_cidrs               = local.edge_args.ingress_cidrs
-  records_bucket_arn          = aws_s3_bucket.records.arn
-  gateway_image               = local.gateway_image_in["us-east-1"]
-  anthropic_secret_arn        = local.secret_arn_in["us-east-1"].anthropic
-  hf_token_secret_arn         = local.secret_arn_in["us-east-1"].hf
-  gateway_api_keys_secret_arn = local.secret_arn_in["us-east-1"].api_keys
-  certificate_arn             = lookup(var.certificate_arns, "us-east-1", "")
-  vpc_cidr                    = "10.40.0.0/16"
+  name                            = local.edge_args.name
+  vllm_image                      = local.edge_args.vllm_image
+  edge_model                      = local.edge_args.edge_model
+  instance_type                   = local.edge_args.instance_type
+  min_nodes                       = local.edge_args.min_nodes
+  max_nodes                       = local.edge_args.max_nodes
+  gate_threshold                  = local.edge_args.gate_threshold
+  gate_consistency_samples        = local.edge_args.gate_consistency_samples
+  cloud_provider                  = local.edge_args.cloud_provider
+  cloud_model                     = local.edge_args.cloud_model
+  cloud_effort                    = local.edge_args.cloud_effort
+  max_escalations_per_min         = local.edge_args.max_escalations_per_min
+  record_include_text             = local.edge_args.record_include_text
+  ingress_cidrs                   = local.edge_args.ingress_cidrs
+  records_bucket_arn              = local.edge_args.records_bucket_arn
+  shadow_rate                     = local.edge_args.shadow_rate
+  max_escalations_per_key_per_min = local.edge_args.per_key
+  gateway_image                   = local.gateway_image_in["us-east-1"]
+  anthropic_secret_arn            = local.secret_arn_in["us-east-1"].anthropic
+  hf_token_secret_arn             = local.secret_arn_in["us-east-1"].hf
+  gateway_api_keys_secret_arn     = local.secret_arn_in["us-east-1"].api_keys
+  certificate_arn                 = lookup(var.certificate_arns, "us-east-1", "")
+  vpc_cidr                        = "10.40.0.0/16"
 }
 
 module "edge_eu_west_1" {
@@ -53,27 +58,29 @@ module "edge_eu_west_1" {
   count     = contains(var.edge_regions, "eu-west-1") ? 1 : 0
   providers = { aws = aws.eu_west_1 }
 
-  name                        = local.edge_args.name
-  vllm_image                  = local.edge_args.vllm_image
-  edge_model                  = local.edge_args.edge_model
-  instance_type               = local.edge_args.instance_type
-  min_nodes                   = local.edge_args.min_nodes
-  max_nodes                   = local.edge_args.max_nodes
-  gate_threshold              = local.edge_args.gate_threshold
-  gate_consistency_samples    = local.edge_args.gate_consistency_samples
-  cloud_provider              = local.edge_args.cloud_provider
-  cloud_model                 = local.edge_args.cloud_model
-  cloud_effort                = local.edge_args.cloud_effort
-  max_escalations_per_min     = local.edge_args.max_escalations_per_min
-  record_include_text         = local.edge_args.record_include_text
-  ingress_cidrs               = local.edge_args.ingress_cidrs
-  records_bucket_arn          = aws_s3_bucket.records.arn
-  gateway_image               = local.gateway_image_in["eu-west-1"]
-  anthropic_secret_arn        = local.secret_arn_in["eu-west-1"].anthropic
-  hf_token_secret_arn         = local.secret_arn_in["eu-west-1"].hf
-  gateway_api_keys_secret_arn = local.secret_arn_in["eu-west-1"].api_keys
-  certificate_arn             = lookup(var.certificate_arns, "eu-west-1", "")
-  vpc_cidr                    = "10.41.0.0/16"
+  name                            = local.edge_args.name
+  vllm_image                      = local.edge_args.vllm_image
+  edge_model                      = local.edge_args.edge_model
+  instance_type                   = local.edge_args.instance_type
+  min_nodes                       = local.edge_args.min_nodes
+  max_nodes                       = local.edge_args.max_nodes
+  gate_threshold                  = local.edge_args.gate_threshold
+  gate_consistency_samples        = local.edge_args.gate_consistency_samples
+  cloud_provider                  = local.edge_args.cloud_provider
+  cloud_model                     = local.edge_args.cloud_model
+  cloud_effort                    = local.edge_args.cloud_effort
+  max_escalations_per_min         = local.edge_args.max_escalations_per_min
+  record_include_text             = local.edge_args.record_include_text
+  ingress_cidrs                   = local.edge_args.ingress_cidrs
+  records_bucket_arn              = local.edge_args.records_bucket_arn
+  shadow_rate                     = local.edge_args.shadow_rate
+  max_escalations_per_key_per_min = local.edge_args.per_key
+  gateway_image                   = local.gateway_image_in["eu-west-1"]
+  anthropic_secret_arn            = local.secret_arn_in["eu-west-1"].anthropic
+  hf_token_secret_arn             = local.secret_arn_in["eu-west-1"].hf
+  gateway_api_keys_secret_arn     = local.secret_arn_in["eu-west-1"].api_keys
+  certificate_arn                 = lookup(var.certificate_arns, "eu-west-1", "")
+  vpc_cidr                        = "10.41.0.0/16"
 }
 
 module "edge_ap_south_1" {
@@ -81,27 +88,29 @@ module "edge_ap_south_1" {
   count     = contains(var.edge_regions, "ap-south-1") ? 1 : 0
   providers = { aws = aws.ap_south_1 }
 
-  name                        = local.edge_args.name
-  vllm_image                  = local.edge_args.vllm_image
-  edge_model                  = local.edge_args.edge_model
-  instance_type               = local.edge_args.instance_type
-  min_nodes                   = local.edge_args.min_nodes
-  max_nodes                   = local.edge_args.max_nodes
-  gate_threshold              = local.edge_args.gate_threshold
-  gate_consistency_samples    = local.edge_args.gate_consistency_samples
-  cloud_provider              = local.edge_args.cloud_provider
-  cloud_model                 = local.edge_args.cloud_model
-  cloud_effort                = local.edge_args.cloud_effort
-  max_escalations_per_min     = local.edge_args.max_escalations_per_min
-  record_include_text         = local.edge_args.record_include_text
-  ingress_cidrs               = local.edge_args.ingress_cidrs
-  records_bucket_arn          = aws_s3_bucket.records.arn
-  gateway_image               = local.gateway_image_in["ap-south-1"]
-  anthropic_secret_arn        = local.secret_arn_in["ap-south-1"].anthropic
-  hf_token_secret_arn         = local.secret_arn_in["ap-south-1"].hf
-  gateway_api_keys_secret_arn = local.secret_arn_in["ap-south-1"].api_keys
-  certificate_arn             = lookup(var.certificate_arns, "ap-south-1", "")
-  vpc_cidr                    = "10.42.0.0/16"
+  name                            = local.edge_args.name
+  vllm_image                      = local.edge_args.vllm_image
+  edge_model                      = local.edge_args.edge_model
+  instance_type                   = local.edge_args.instance_type
+  min_nodes                       = local.edge_args.min_nodes
+  max_nodes                       = local.edge_args.max_nodes
+  gate_threshold                  = local.edge_args.gate_threshold
+  gate_consistency_samples        = local.edge_args.gate_consistency_samples
+  cloud_provider                  = local.edge_args.cloud_provider
+  cloud_model                     = local.edge_args.cloud_model
+  cloud_effort                    = local.edge_args.cloud_effort
+  max_escalations_per_min         = local.edge_args.max_escalations_per_min
+  record_include_text             = local.edge_args.record_include_text
+  ingress_cidrs                   = local.edge_args.ingress_cidrs
+  records_bucket_arn              = local.edge_args.records_bucket_arn
+  shadow_rate                     = local.edge_args.shadow_rate
+  max_escalations_per_key_per_min = local.edge_args.per_key
+  gateway_image                   = local.gateway_image_in["ap-south-1"]
+  anthropic_secret_arn            = local.secret_arn_in["ap-south-1"].anthropic
+  hf_token_secret_arn             = local.secret_arn_in["ap-south-1"].hf
+  gateway_api_keys_secret_arn     = local.secret_arn_in["ap-south-1"].api_keys
+  certificate_arn                 = lookup(var.certificate_arns, "ap-south-1", "")
+  vpc_cidr                        = "10.42.0.0/16"
 }
 
 module "edge_ap_southeast_1" {
@@ -109,27 +118,29 @@ module "edge_ap_southeast_1" {
   count     = contains(var.edge_regions, "ap-southeast-1") ? 1 : 0
   providers = { aws = aws.ap_southeast_1 }
 
-  name                        = local.edge_args.name
-  vllm_image                  = local.edge_args.vllm_image
-  edge_model                  = local.edge_args.edge_model
-  instance_type               = local.edge_args.instance_type
-  min_nodes                   = local.edge_args.min_nodes
-  max_nodes                   = local.edge_args.max_nodes
-  gate_threshold              = local.edge_args.gate_threshold
-  gate_consistency_samples    = local.edge_args.gate_consistency_samples
-  cloud_provider              = local.edge_args.cloud_provider
-  cloud_model                 = local.edge_args.cloud_model
-  cloud_effort                = local.edge_args.cloud_effort
-  max_escalations_per_min     = local.edge_args.max_escalations_per_min
-  record_include_text         = local.edge_args.record_include_text
-  ingress_cidrs               = local.edge_args.ingress_cidrs
-  records_bucket_arn          = aws_s3_bucket.records.arn
-  gateway_image               = local.gateway_image_in["ap-southeast-1"]
-  anthropic_secret_arn        = local.secret_arn_in["ap-southeast-1"].anthropic
-  hf_token_secret_arn         = local.secret_arn_in["ap-southeast-1"].hf
-  gateway_api_keys_secret_arn = local.secret_arn_in["ap-southeast-1"].api_keys
-  certificate_arn             = lookup(var.certificate_arns, "ap-southeast-1", "")
-  vpc_cidr                    = "10.43.0.0/16"
+  name                            = local.edge_args.name
+  vllm_image                      = local.edge_args.vllm_image
+  edge_model                      = local.edge_args.edge_model
+  instance_type                   = local.edge_args.instance_type
+  min_nodes                       = local.edge_args.min_nodes
+  max_nodes                       = local.edge_args.max_nodes
+  gate_threshold                  = local.edge_args.gate_threshold
+  gate_consistency_samples        = local.edge_args.gate_consistency_samples
+  cloud_provider                  = local.edge_args.cloud_provider
+  cloud_model                     = local.edge_args.cloud_model
+  cloud_effort                    = local.edge_args.cloud_effort
+  max_escalations_per_min         = local.edge_args.max_escalations_per_min
+  record_include_text             = local.edge_args.record_include_text
+  ingress_cidrs                   = local.edge_args.ingress_cidrs
+  records_bucket_arn              = local.edge_args.records_bucket_arn
+  shadow_rate                     = local.edge_args.shadow_rate
+  max_escalations_per_key_per_min = local.edge_args.per_key
+  gateway_image                   = local.gateway_image_in["ap-southeast-1"]
+  anthropic_secret_arn            = local.secret_arn_in["ap-southeast-1"].anthropic
+  hf_token_secret_arn             = local.secret_arn_in["ap-southeast-1"].hf
+  gateway_api_keys_secret_arn     = local.secret_arn_in["ap-southeast-1"].api_keys
+  certificate_arn                 = lookup(var.certificate_arns, "ap-southeast-1", "")
+  vpc_cidr                        = "10.43.0.0/16"
 }
 
 locals {
@@ -154,7 +165,19 @@ resource "aws_globalaccelerator_accelerator" "this" {
 }
 
 resource "aws_globalaccelerator_listener" "this" {
-  provider        = aws.global
+  provider = aws.global
+
+  lifecycle {
+    precondition {
+      condition     = local.use_tls || var.allow_insecure_http
+      error_message = "No certificate_arns given. Provide one ACM certificate per edge region, or set allow_insecure_http = true to accept cleartext HTTP (API keys would travel unencrypted)."
+    }
+    precondition {
+      condition     = !local.use_tls || length(setsubtract(var.edge_regions, keys(var.certificate_arns))) == 0
+      error_message = "certificate_arns must cover every region in edge_regions when TLS is enabled."
+    }
+  }
+
   accelerator_arn = aws_globalaccelerator_accelerator.this.id
   protocol        = "TCP"
   client_affinity = "NONE"

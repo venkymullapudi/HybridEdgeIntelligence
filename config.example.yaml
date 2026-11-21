@@ -7,9 +7,14 @@ edge_base_url: http://127.0.0.1:8000/v1
 edge_model: Qwen/Qwen2.5-7B-Instruct
 edge_max_tokens: 512
 edge_temperature: 0.2
+edge_stream: true
+edge_deadline_s: 10      # escalate instead of waiting on a slow edge
 
 gate_threshold: 0.70
 gate_consistency_samples: 0     # e.g. 3 for self-consistency (costs edge compute)
+gate_consistency_band: 0.15     # ...drawn only when |score - threshold| < band
+gate_abort_window_prob: 0.15    # stop a doomed answer early (0 = off)
+gate_abort_min_tokens: 16
 gate_weights:
   mean_prob: 0.35
   min_window_prob: 0.25
@@ -21,6 +26,16 @@ cloud_provider: anthropic       # anthropic | bedrock | none
 cloud_model: claude-opus-5-5
 cloud_effort: medium
 cloud_max_escalations_per_min: 600
+cloud_max_escalations_per_key_per_min: 120
+cloud_price_in_per_mtok: 4.0
+cloud_price_out_per_mtok: 20.0
+
+shadow_rate: 0.01               # background Claude calls on confident answers, for calibration
+shadow_max_per_min: 30
+
+allow_client_overrides: true
+max_client_min_confidence: 0.95
+cache_shared_across_keys: false
 
 record_sink: file               # none | stdout | file | firehose
 record_path: data/escalations.jsonl

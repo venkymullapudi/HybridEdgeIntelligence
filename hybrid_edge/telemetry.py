@@ -35,7 +35,8 @@ class Metrics:
         self.latency_count: Dict[str, int] = defaultdict(int)
 
     def observe(self, source: str, escalated: bool, degraded: bool, score: Optional[float],
-                latency_ms: float, cloud_tokens: int = 0) -> None:
+                latency_ms: float, cloud_tokens: int = 0, cloud_cost: float = 0.0,
+                avoided_cost: float = 0.0) -> None:
         with self._lock:
             self.counters["requests_total"] += 1
             self.counters[f"served_{source}_total"] += 1
@@ -44,23 +45,27 @@ class Metrics:
             if degraded:
                 self.counters["degraded_total"] += 1
             self.counters["cloud_tokens_total"] += cloud_tokens
+            self.counters["cloud_cost_usd_total"] += cloud_cost
+            self.counters["avoided_cost_usd_total"] += avoided_cost
             self.latency_sum[source] += latency_ms
             self.latency_count[source] += 1
         if self.s.emit_emf:
-            self._emf(source, escalated, degraded, score, latency_ms, cloud_tokens)
+            self._emf(source, escalated, degraded, score, latency_ms, cloud_tokens, cloud_cost, avoided_cost)
 
     def incr(self, name: str, value: float = 1.0) -> None:
         with self._lock:
             self.counters[name] += value
 
     def _emf(self, source: str, escalated: bool, degraded: bool, score: Optional[float],
-             latency_ms: float, cloud_tokens: int) -> None:
+             latency_ms: float, cloud_tokens: int, cloud_cost: float, avoided_cost: float) -> None:
         metrics = [
             {"Name": "Requests", "Unit": "Count"},
             {"Name": "Escalations", "Unit": "Count"},
             {"Name": "Degraded", "Unit": "Count"},
             {"Name": "LatencyMs", "Unit": "Milliseconds"},
             {"Name": "CloudTokens", "Unit": "Count"},
+            {"Name": "CloudCostUsd", "Unit": "None"},
+            {"Name": "AvoidedCostUsd", "Unit": "None"},
         ]
         doc: Dict[str, Any] = {
             "_aws": {
@@ -79,6 +84,8 @@ class Metrics:
             "Degraded": 1 if degraded else 0,
             "LatencyMs": round(latency_ms, 2),
             "CloudTokens": cloud_tokens,
+            "CloudCostUsd": round(cloud_cost, 6),
+            "AvoidedCostUsd": round(avoided_cost, 6),
         }
         if score is not None:
             doc["Confidence"] = round(score, 4)

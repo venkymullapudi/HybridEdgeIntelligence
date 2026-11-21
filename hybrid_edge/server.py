@@ -6,7 +6,7 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -17,7 +17,7 @@ from .backends.base import ChatMessage
 from .cloud.claude import ClaudeEscalator
 from .config import Settings
 from .gate.confidence import Calibrator, ConfidenceGate
-from .orchestrator import HybridOrchestrator, ServiceUnavailable
+from .orchestrator import HybridOrchestrator, ServiceUnavailable, caller_id
 from .telemetry import Metrics, RecordSink
 
 log = logging.getLogger("hybrid_edge")
@@ -54,7 +54,7 @@ class InferResponse(BaseModel):
     latency_ms: float
     edge_latency_ms: Optional[float] = None
     cloud_latency_ms: Optional[float] = None
-    usage: Dict[str, int] = {}
+    usage: Dict[str, Union[int, float]] = {}
     signals: Optional[Dict[str, Any]] = None
 
 
@@ -84,22 +84,24 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
+        await orch.drain()
         await orch.backend.aclose()
         await orch.escalator.aclose()
 
-    app = FastAPI(title="Hybrid Edge Intelligence", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Hybrid Edge Intelligence", version="0.2.0", lifespan=lifespan)
     app.state.orchestrator = orch
     app.state.settings = settings
 
-    def auth(authorization: Optional[str] = Header(None), x_api_key: Optional[str] = Header(None)) -> None:
-        if not settings.api_keys:
-            return
+    def auth(authorization: Optional[str] = Header(None), x_api_key: Optional[str] = Header(None)) -> str:
         supplied = x_api_key or (authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None)
+        if not settings.api_keys:
+            return caller_id(supplied)
         if not supplied or not any(hmac.compare_digest(supplied, k) for k in settings.api_keys):
             raise HTTPException(status_code=401, detail="invalid API key")
+        return caller_id(supplied)
 
-    @app.post("/v1/infer", response_model=InferResponse, dependencies=[Depends(auth)])
-    async def infer(req: InferRequest) -> InferResponse:
+    @app.post("/v1/infer", response_model=InferResponse)
+    async def infer(req: InferRequest, caller: str = Depends(auth)) -> InferResponse:
         if req.messages:
             msgs = [ChatMessage(m.role, m.content) for m in req.messages]
         elif req.prompt is not None:
@@ -108,7 +110,7 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
             raise HTTPException(status_code=422, detail="provide `messages` or `prompt`")
         try:
             res = await orch.infer(msgs, route=req.route, min_confidence=req.min_confidence,
-                                   max_tokens=req.max_tokens, use_cache=req.use_cache)
+                                   max_tokens=req.max_tokens, use_cache=req.use_cache, caller=caller)
         except ServiceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         out = InferResponse(**{k: v for k, v in res.__dict__.items() if k in InferResponse.model_fields})
@@ -129,7 +131,7 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
         if not edge_ok:
             raise HTTPException(status_code=503, detail="edge model not ready")
         return {"status": "ready", "edge_model": settings.edge_model,
-                "cloud_breaker_open": orch.escalator.breaker.open}
+                "cloud_breaker": orch.escalator.breaker.state}
 
     @app.get("/metrics", response_class=PlainTextResponse)
     async def metrics() -> str:

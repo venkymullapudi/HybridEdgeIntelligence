@@ -79,11 +79,13 @@ resource "aws_secretsmanager_secret" "gateway_api_keys" {
 # Claude's answers back into the edge model and recalibrating the gate.
 # --------------------------------------------------------------------------
 resource "aws_s3_bucket" "records" {
+  count         = var.records_residency == "central" ? 1 : 0
   bucket_prefix = "${var.name}-records-"
 }
 
 resource "aws_s3_bucket_public_access_block" "records" {
-  bucket                  = aws_s3_bucket.records.id
+  count                   = length(aws_s3_bucket.records)
+  bucket                  = aws_s3_bucket.records[0].id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -91,19 +93,22 @@ resource "aws_s3_bucket_public_access_block" "records" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "records" {
-  bucket = aws_s3_bucket.records.id
+  count  = length(aws_s3_bucket.records)
+  bucket = aws_s3_bucket.records[0].id
   rule {
     apply_server_side_encryption_by_default { sse_algorithm = "aws:kms" }
   }
 }
 
 resource "aws_s3_bucket_versioning" "records" {
-  bucket = aws_s3_bucket.records.id
+  count  = length(aws_s3_bucket.records)
+  bucket = aws_s3_bucket.records[0].id
   versioning_configuration { status = "Enabled" }
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "records" {
-  bucket = aws_s3_bucket.records.id
+  count  = length(aws_s3_bucket.records)
+  bucket = aws_s3_bucket.records[0].id
   rule {
     id     = "tier-and-expire"
     status = "Enabled"

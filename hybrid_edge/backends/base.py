@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Protocol
+from typing import Callable, Dict, List, Optional, Protocol
 
 
 @dataclass
@@ -30,6 +30,9 @@ class ChatMessage:
     content: str
 
 
+AbortCheck = Callable[[List[TokenInfo]], bool]
+
+
 class EdgeBackend(Protocol):
     name: str
 
@@ -43,6 +46,19 @@ class EdgeBackend(Protocol):
         top_logprobs: int = 5,
     ) -> List[Generation]:
         """Return ``n`` generations with per-token logprobs."""
+        ...
+
+    async def generate_stream(
+        self,
+        messages: List[ChatMessage],
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_logprobs: int = 5,
+        should_abort: Optional[AbortCheck] = None,
+    ) -> Generation:
+        """Stream one generation; stop early (finish_reason="aborted") when
+        ``should_abort(tokens_so_far)`` returns True."""
         ...
 
     async def ready(self) -> bool:
