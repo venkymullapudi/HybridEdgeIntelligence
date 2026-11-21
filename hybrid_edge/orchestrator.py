@@ -153,14 +153,22 @@ class HybridOrchestrator:
         if route == "cloud":
             skip_edge = True
             reasons.append("client requested cloud")
-        elif estimate_tokens(messages) + (max_tokens or self.s.edge_max_tokens) > self.s.edge_context_tokens:
+        # The edge answer is sized to fit what's left of the context window, so a large
+        # requested max_tokens can't by itself force a (billed) escalation. Only a
+        # prompt that leaves no room for a useful answer skips the edge.
+        edge_max_tokens = max_tokens or self.s.edge_max_tokens
+        room = self.s.edge_context_tokens - estimate_tokens(messages)
+        if not skip_edge and room < self.s.edge_min_answer_tokens:
             skip_edge = True
             reasons.append("prompt exceeds edge context window")
+        elif not skip_edge and edge_max_tokens > room:
+            edge_max_tokens = room
+            reasons.append(f"edge answer limited to {room} tokens by its context window")
 
         # ---- edge -----------------------------------------------------------
         if not skip_edge:
             try:
-                primary, signals, decision = await self._edge(messages, max_tokens, threshold, route, caller)
+                primary, signals, decision = await self._edge(messages, edge_max_tokens, threshold, route, caller)
                 edge_latency = primary.latency_ms
                 reasons.extend(decision.reasons)
             except EdgeBackendError as exc:
@@ -214,7 +222,7 @@ class HybridOrchestrator:
         return result
 
     async def _edge(self, messages, max_tokens, threshold, route, caller) -> Tuple[Generation, Signals, GateDecision]:
-        mt = max_tokens or self.s.edge_max_tokens
+        mt = max_tokens
         # Only abort early when the answer can actually be escalated; otherwise a
         # complete (if shaky) edge answer beats a truncated one.
         abort = self._abort_check() if route == "auto" and self.escalator.can_escalate(caller) else None

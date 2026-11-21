@@ -13,7 +13,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from .backends import build_backend
-from .backends.base import ChatMessage
+from .backends.base import ChatMessage, conversation_problem
 from .cloud.claude import ClaudeEscalator
 from .config import Settings
 from .gate.confidence import Calibrator, ConfidenceGate
@@ -118,6 +118,9 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
             msgs = [ChatMessage("user", req.prompt)]
         else:
             raise HTTPException(status_code=422, detail="provide `messages` or `prompt`")
+        problem = conversation_problem(msgs)
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
         if len(msgs) > settings.max_messages:
             raise HTTPException(status_code=413, detail=f"too many messages (max {settings.max_messages})")
         if sum(len(m.content) for m in msgs) > settings.max_request_chars:

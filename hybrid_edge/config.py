@@ -42,6 +42,8 @@ class Settings:
     edge_top_logprobs: int = 5
     edge_timeout_s: float = 30.0
     edge_context_tokens: int = 8192
+    # Below this much room left in the edge context, skip the edge and escalate.
+    edge_min_answer_tokens: int = 256
     # Escalate instead of waiting when the edge model is slower than this (0 = off).
     edge_deadline_s: float = 10.0
     # Stream from the edge model so the gate can abort a doomed answer early.

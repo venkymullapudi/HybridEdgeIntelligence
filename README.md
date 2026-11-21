@@ -28,7 +28,7 @@ and hard requests still get frontier-model quality.
 ## How a request flows
 
 1. **Cache and coalescing.** Repeated prompts are answered from an in-process TTL cache. Entries are scoped to the caller's API key, so one tenant never sees another's answers. Keys keep inner whitespace, so prompts that differ only in indentation (code, YAML) never share an answer. Identical requests that arrive at the same time share one computation (single-flight), so a burst of the same hard prompt makes one Claude call, not fifty.
-2. **Pre-gate.** Requests go straight to Claude when the client sends `route: "cloud"` (if the policy allows overrides) or the prompt won't fit the edge model's context window.
+2. **Pre-gate.** Requests go straight to Claude when the client sends `route: "cloud"` (if the policy allows overrides), or when the prompt leaves less than `edge_min_answer_tokens` of room in the edge model's context window.
 3. **Edge generation, streamed.** vLLM streams the answer with per-token logprobs and top-k alternatives, and the gate watches it as it arrives:
    * **Early abort.** If a window of tokens collapses below `gate_abort_window_prob`, generation stops and the request escalates right away instead of finishing a doomed answer. This only happens when Claude can actually take the request.
    * **Deadline.** If the edge model is slower than `edge_deadline_s` (for example, a queued GPU), the request escalates instead of waiting.
@@ -79,6 +79,8 @@ Each response tells you what happened:
 | `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, per-source latency histograms (for p95/p99), cloud tokens and cost. Needs an API key when keys are configured |
 
 Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set.
+
+Conversation shape: at most one `system` message, which must come first, and the last message must be from the user (assistant prefill isn't supported). Anything else gets a 422. A large `max_tokens` shrinks the edge answer to fit the edge context window rather than forcing an escalation.
 
 Request limits: requests over `max_request_chars` (default 100k) or `max_messages` (default 200) are rejected with 413.
 

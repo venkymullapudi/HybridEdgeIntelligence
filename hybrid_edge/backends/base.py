@@ -82,3 +82,22 @@ def last_user(messages: List[ChatMessage]) -> Optional[str]:
         if m.role == "user":
             return m.content
     return None
+
+
+def conversation_problem(messages: List[ChatMessage]) -> Optional[str]:
+    """Why a conversation can't be served, or None.
+
+    Both tiers need the same shape: at most one system message, first; then turns
+    ending with the user. A trailing assistant turn is a prefill, which current
+    Claude models reject, and stray system turns break many edge chat templates."""
+    if not messages:
+        return "no messages"
+    for i, m in enumerate(messages):
+        if m.role == "system" and i != 0:
+            return "a system message is only allowed as the first message"
+    turns = messages[1:] if messages[0].role == "system" else messages
+    if not turns:
+        return "the conversation needs at least one user message"
+    if turns[-1].role != "user":
+        return "the last message must be from the user (assistant prefill is not supported)"
+    return None

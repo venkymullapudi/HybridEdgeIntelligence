@@ -276,6 +276,31 @@ FastAPI or uvicorn would have shipped on the next image build, untested.
 (`anthropic<3`, `fastapi<1`, and so on). CI covers both ends of the supported
 range: Python 3.9 resolves the oldest versions, and 3.12 the newest.
 
+## 27. Can a client force an escalation without `route: "cloud"`?
+
+**Yes, through `max_tokens`.** The pre-gate sent a request to Claude whenever
+*prompt + max_tokens* exceeded the edge context window. A request with
+`max_tokens: 8192` and an 8192-token edge therefore always escalated, even with
+`allow_client_overrides = false`.
+
+**Fix:** the edge answer is sized to the room left in its context window, and
+the response says so (`edge answer limited to N tokens…`). Only a prompt that
+leaves less than `edge_min_answer_tokens` (default 256) of room skips the edge.
+If the shortened answer is cut off, the gate's truncation penalty decides
+whether it escalates, the same as for any other answer.
+
+## 28. What happens to a conversation the models can't take?
+
+**It failed late, and in confusing ways.** A conversation ending in an
+assistant turn is a prefill: current Claude models reject it with a 400, which
+showed up as a degraded edge answer. A system message mid-conversation was
+silently dropped on the Claude path (only the last one was kept) and breaks
+many edge chat templates.
+
+**Fix:** the gateway checks the conversation's shape before any model runs. It
+allows at most one system message, which must come first, and the last turn
+must be from the user. Anything else gets a 422 that says what's wrong.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
