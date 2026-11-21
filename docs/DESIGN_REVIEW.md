@@ -529,6 +529,34 @@ leftover from question 42.
   actions, no alarm topic uses `aws/sns`, and the shutdown timings from
   question 19 stay in order.
 
+## 44. Are record batches sized in the unit Firehose enforces?
+
+**No.** Firehose limits a `PutRecordBatch` call to 4 MiB of *bytes*, but the
+sink sized batches (and its queue budget from question 34) in *characters*.
+CJK text is about 3 bytes per character, so a batch the sink thought was under
+4 MB could be ~9 MB. Firehose rejected the whole call, and every record in it
+was lost. That data comes from exactly the non-English traffic you most need
+to calibrate on.
+
+**Fix:** each record is encoded to UTF-8 once, in `submit`, and every limit is
+measured in bytes from then on: the per-record maximum, the batch size and the
+queue budget. A test batches about 12 MB of CJK records through a fake
+Firehose that rejects any oversized call.
+
+## 45. How wrong is the token estimate outside English?
+
+**About 4× too low for CJK.** `estimate_tokens` assumed about 4 characters per
+token, which is right for English and code. Chinese, Japanese and Korean run
+close to one token per character. A long CJK prompt was estimated at a quarter
+of its size, so the edge was asked for more `max_tokens` than its context had
+room for (question 27). vLLM rejected the request, and every such request
+escalated at full price.
+
+**Fix:** ASCII characters still count at about 4 per token, and every other
+character counts as about one token. This slightly over-estimates
+accented-Latin text, which is the safe direction. Counting uses
+`str.encode("ascii", "ignore")`, which runs in C.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

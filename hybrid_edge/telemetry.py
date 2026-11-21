@@ -161,7 +161,7 @@ class RecordSink:
         self.kind = settings.record_sink
         self.metrics = metrics
         self._firehose = firehose_client
-        self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=max(1, settings.record_queue_size))
+        self._queue: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=max(1, settings.record_queue_size))
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self.queued_bytes = 0
@@ -182,12 +182,14 @@ class RecordSink:
             return
         if not self.s.record_include_text:
             record = {k: v for k, v in record.items() if k not in ("messages", "edge_answer", "cloud_answer")}
-        line = json.dumps(record, ensure_ascii=False, default=str)
-        if len(line.encode("utf-8")) > FIREHOSE_MAX_RECORD_BYTES:
-            self._count("records_dropped_total")
-            log.warning("dropping oversized record (%d bytes)", len(line))
-            return
+        # Encode once: every limit (Firehose record/batch, queue budget) is in bytes, and
+        # non-Latin text is several bytes per character.
+        line = (json.dumps(record, ensure_ascii=False, default=str) + "\n").encode("utf-8")
         size = len(line)
+        if size > FIREHOSE_MAX_RECORD_BYTES:
+            self._count("records_dropped_total")
+            log.warning("dropping oversized record (%d bytes)", size)
+            return
         with self._lock:
             if self.queued_bytes + size > self.s.record_queue_max_bytes:
                 self._count("records_dropped_total")
@@ -236,7 +238,7 @@ class RecordSink:
             if first is None:
                 return
             self._release(len(first))
-            batch: List[str] = [first]
+            batch: List[bytes] = [first]
             size = len(first)
             stop = False
             deadline = time.monotonic() + self.s.record_flush_interval_s
@@ -258,14 +260,14 @@ class RecordSink:
             if stop:
                 return
 
-    def _write_batch(self, lines: List[str]) -> None:
+    def _write_batch(self, lines: List[bytes]) -> None:
         try:
             if self.kind == "stdout":
-                sys.stdout.write("".join(line + "\n" for line in lines))
+                sys.stdout.write(b"".join(lines).decode("utf-8"))
                 sys.stdout.flush()
             elif self.kind == "file":
-                with open(self.s.record_path, "a", encoding="utf-8") as fh:
-                    fh.write("".join(line + "\n" for line in lines))
+                with open(self.s.record_path, "ab") as fh:
+                    fh.write(b"".join(lines))
             elif self.kind == "firehose":
                 self._put_firehose(lines)
             self._count("records_written_total", len(lines))
@@ -273,12 +275,12 @@ class RecordSink:
             log.exception("failed to write %d escalation records", len(lines))
             self._count("records_failed_total", len(lines))
 
-    def _put_firehose(self, lines: List[str], attempts: int = 3) -> None:
+    def _put_firehose(self, lines: List[bytes], attempts: int = 3) -> None:
         pending = lines
         for attempt in range(attempts):
             resp = self._firehose.put_record_batch(
                 DeliveryStreamName=self.s.record_firehose_stream,
-                Records=[{"Data": (line + "\n").encode("utf-8")} for line in pending],
+                Records=[{"Data": line} for line in pending],
             )
             if not resp.get("FailedPutCount"):
                 return

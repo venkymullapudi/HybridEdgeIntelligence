@@ -73,8 +73,17 @@ class EdgeBackendError(RuntimeError):
 
 
 def estimate_tokens(messages: List[ChatMessage]) -> int:
-    """Cheap, tokenizer-free estimate (~4 chars/token) used for routing decisions only."""
-    return sum(len(m.content) for m in messages) // 4 + 4 * len(messages)
+    """Cheap, tokenizer-free estimate used for routing decisions only.
+
+    ~4 characters per token holds for English and code, but CJK and many other
+    scripts run close to one token per character. Counting those at 4 chars/token
+    underestimated long non-Latin prompts ~4x, so the edge was asked for more tokens
+    than its context held, failed, and the request escalated at full cost."""
+    total = 0
+    for m in messages:
+        ascii_chars = len(m.content.encode("ascii", "ignore"))  # C-speed count of ASCII chars
+        total += ascii_chars // 4 + (len(m.content) - ascii_chars) + 4
+    return total
 
 
 def last_user(messages: List[ChatMessage]) -> Optional[str]:
