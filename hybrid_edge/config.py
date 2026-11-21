@@ -72,6 +72,9 @@ class Settings:
     cloud_effort: str = "medium"
     cloud_max_tokens: int = 16000
     cloud_timeout_s: float = 120.0
+    # Total budget for one escalation, SDK retries included. Keep below the load
+    # balancer's idle timeout (180 s in the Terraform module).
+    cloud_deadline_s: float = 90.0
     cloud_aws_region: Optional[str] = None
     cloud_refusal_fallbacks: bool = True
     cloud_include_edge_draft: bool = False

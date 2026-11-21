@@ -45,7 +45,7 @@ and hard requests still get frontier-model quality.
    A hand-weighted score is used out of the box. Once you have logged data, a
    **calibrated logistic model** replaces it (see *Calibrating the gate* below).
 5. **Escalate or serve.** If `score ≥ τ`, the edge answer is returned. Otherwise the request goes to Claude (`claude-opus-5-5`, adaptive thinking, effort `medium` by default). Claude's refusal fallbacks are enabled: server-side `fallbacks: "default"` on the Claude API, and the SDK's client-side middleware on Bedrock.
-6. **Degrade, don't fail.** If Claude is down, rate-limited, over budget, or the circuit breaker is open, the edge answer is returned with `degraded: true`. A 503 is returned only when both tiers are down. After a cooldown the breaker lets **one** probe through (half-open) before it reopens to traffic. Budgets apply per node *and* per API key, so one noisy client can't drain the node.
+6. **Degrade, don't fail.** If Claude is down, rate-limited, over budget, or the circuit breaker is open, the edge answer is returned with `degraded: true`. A 503 is returned only when both tiers are down. A single `cloud_deadline_s` (default 90 s, below the ALB's 180 s idle timeout) caps each escalation, SDK retries included. After a cooldown the breaker lets **one** probe through (half-open) before it reopens to traffic. Budgets apply per node *and* per API key, so one noisy client can't drain the node.
 7. **Shadow and record.** A small `shadow_rate` of edge-served requests is also sent to Claude **in the background**, without adding latency for the user. Escalations and shadow calls are written to Firehose → S3 (in-region by default) as `(prompt, edge answer, signals, Claude answer)`. Shadow calls matter because without them you would only have reference answers for requests the gate already rejected, and you couldn't calibrate the threshold. This data drives gate calibration and distillation into the edge model, so the escalation rate falls over time.
 8. **Cost accounting.** Each response reports `cloud_cost_usd` or `avoided_cost_usd`, and `/metrics` and CloudWatch keep running totals, so you can see what the edge is saving.
 
@@ -173,6 +173,7 @@ Choosing τ trades **escalation rate** (cost) against **edge precision** (qualit
    ```
 
    As a crude fallback, `hybrid-edge-calibrate --weak-labels` labels by lexical overlap instead.
+   Shadow records carry `sample_weight = 1/shadow_rate`, and the calibrator uses it, so its precision and coverage numbers describe real traffic rather than the sample.
 3. Fit the calibrator:
 
    ```bash

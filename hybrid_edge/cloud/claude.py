@@ -11,6 +11,7 @@ shadow call), so every call here is a deliberate spend. Includes:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -253,7 +254,13 @@ class ClaudeEscalator:
         req = self._request(messages, None if shadow else edge_draft)
         t0 = time.perf_counter()
         try:
-            resp = await self.client.beta.messages.create(**req)
+            # One deadline over the SDK's own retries, kept below the ALB idle timeout so
+            # the user gets a (degraded) answer instead of a 504 while we keep paying.
+            resp = await asyncio.wait_for(self.client.beta.messages.create(**req),
+                                          timeout=self.s.cloud_deadline_s)
+        except asyncio.TimeoutError as exc:
+            self.breaker.failure()
+            raise CloudUnavailable(f"cloud deadline of {self.s.cloud_deadline_s}s exceeded") from exc
         except anthropic.BadRequestError as exc:
             # A malformed request is our bug, not a cloud outage: don't trip the breaker.
             self.breaker.release()

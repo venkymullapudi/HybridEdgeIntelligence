@@ -140,6 +140,41 @@ are **dropped and counted** (`records_dropped_total`) rather than slowing
 serving. Shutdown flushes the queue. Oversized records (over 1000 KB) are
 dropped too, since Firehose would reject them.
 
+## 15. What happens to coalesced requests when the first caller hangs up?
+
+**They all failed.** Single-flight ran the shared work inside the first
+caller's own request. When that client disconnected, the server cancelled the
+request, and the cancellation passed to every other request waiting on the
+same answer.
+
+**Fix:** the shared work runs as its own task. Each caller waits on a shielded
+reference to it, so a caller leaving cancels only its own wait. The work still
+finishes, gets cached, and is waited for on shutdown.
+
+## 16. How long can one escalation take?
+
+**Longer than the load balancer waits.** The SDK timeout (120 s) applied to
+each of up to three attempts, so one escalation could run for about 6 minutes.
+The ALB gives up after 180 s, so the user got a 504 while the gateway kept
+waiting on, and paying for, Claude.
+
+**Fix:** one overall `cloud_deadline_s` (default 90 s) covers the whole call,
+retries included. Past the deadline the request falls back to the edge answer
+(`degraded: true`), and the timeout counts toward the circuit breaker.
+
+## 17. Does the calibrator estimate precision on traffic or on the sample?
+
+**On the sample, which is the wrong one.** Every escalation is recorded, but
+shadow records are only a `shadow_rate` sample of confident traffic. Treated
+equally, confident traffic is under-counted by a factor of 1/`shadow_rate`. So
+the chosen threshold, and the reported coverage and escalation rate, were
+skewed.
+
+**Fix:** each record carries a `sample_weight` (1/`shadow_rate` for shadow
+records, 1 for escalations). `hybrid-edge-calibrate` uses it both when fitting
+and when choosing the threshold, so precision and coverage are estimates over
+real traffic.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

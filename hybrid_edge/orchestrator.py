@@ -113,29 +113,30 @@ class HybridOrchestrator:
             hit = self.cache.get(key)
             if hit is not None and (hit.source == "cloud" or (hit.confidence or 0) >= threshold):
                 return self._copy_shared(hit, t0, "cache hit (originally served by %s)" % hit.source)
-            # Single-flight: identical concurrent requests share one computation.
+            # Single-flight: identical concurrent requests share one computation. It runs
+            # as its own task, so a caller disconnecting (cancellation) never cancels the
+            # work other callers are waiting on.
             pending = self._inflight.get(key)
             if pending is not None:
                 res = await asyncio.shield(pending)
                 return self._copy_shared(res, t0, "coalesced with an identical in-flight request")
-            fut: "asyncio.Future[InferenceResult]" = asyncio.get_running_loop().create_future()
-            self._inflight[key] = fut
-            try:
-                res = await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes)
-                fut.set_result(res)
-                return res
-            except BaseException as exc:
-                fut.set_exception(exc)
-                fut.exception()  # mark retrieved, so waiter-less failures don't log noise
-                raise
-            finally:
-                self._inflight.pop(key, None)
+            task = asyncio.ensure_future(
+                self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes))
+            self._inflight[key] = task
+            task.add_done_callback(lambda t, k=key: self._settle(k, t))
+            return await asyncio.shield(task)
         return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes)
+
+    def _settle(self, key: str, task: "asyncio.Future[InferenceResult]") -> None:
+        if self._inflight.get(key) is task:
+            del self._inflight[key]
+        if not task.cancelled():
+            task.exception()  # mark retrieved: a failure nobody awaited shouldn't log noise
 
     async def drain(self) -> None:
         """Wait for background (shadow) work; used on shutdown and in tests."""
-        while self._background:
-            await asyncio.gather(*list(self._background), return_exceptions=True)
+        while self._background or self._inflight:
+            await asyncio.gather(*list(self._background), *list(self._inflight.values()), return_exceptions=True)
 
     # ---------------------------------------------------------------- internal
     async def _infer(self, messages, route, threshold, max_tokens, caller, key, t0, policy_notes) -> InferenceResult:
@@ -348,6 +349,9 @@ class HybridOrchestrator:
             "cloud_model": cloud.model if cloud else None,
             "escalated": result.escalated,
             "shadow": shadow,
+            # Inverse-probability weight for calibration: shadow records stand for
+            # 1/shadow_rate confident requests; every escalation is recorded.
+            "sample_weight": (1.0 / self.s.shadow_rate) if shadow and self.s.shadow_rate > 0 else 1.0,
             "degraded": result.degraded,
             "confidence": result.confidence,
             "threshold": result.threshold,
