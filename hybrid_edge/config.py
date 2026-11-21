@@ -113,11 +113,17 @@ class Settings:
     record_include_text: bool = True
     # Fraction of confident (non-escalated) requests also recorded, for gate calibration.
     record_sample_rate_confident: float = 0.02
+    record_queue_size: int = 10000
+    record_flush_interval_s: float = 1.0
 
     # --- server ----------------------------------------------------------
     host: str = "0.0.0.0"
     port: int = 8080
     api_keys: List[str] = field(default_factory=list)
+    # Request limits (reject with 413): stop oversized prompts from burning memory or
+    # escalating straight to Claude because they overflow the edge context.
+    max_request_chars: int = 100000
+    max_messages: int = 200
 
     @classmethod
     def load(cls, overrides: Optional[Dict[str, Any]] = None) -> "Settings":

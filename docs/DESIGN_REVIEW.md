@@ -117,6 +117,29 @@ image (Python 3.12) installs 1.x.
 
 **Fix:** tests now run on both, locally and in CI.
 
+## 13. What stops a client sending a 5 MB prompt?
+
+**Nothing in v0.2.** An oversized request used gateway memory, and because it
+overflowed the edge context window, it went *straight to Claude*. The client
+chose the size of the bill.
+
+**Fix:** the gateway rejects requests over `max_request_chars` (default 100k)
+or `max_messages` (default 200) with HTTP 413, before any model sees them.
+
+## 14. What happens to records under load?
+
+**They piled up without bound.** Each record was handed to the default thread
+pool and written with one Firehose `PutRecord` call per record. In a traffic
+spike the executor queue grew without limit, and each call paid a full round
+trip.
+
+**Fix:** a bounded queue (`record_queue_size`) drained by one background thread
+that writes batches. Firehose uses `PutRecordBatch` (up to 500 records), and
+records it rejects are retried with backoff. When the queue is full, records
+are **dropped and counted** (`records_dropped_total`) rather than slowing
+serving. Shutdown flushes the queue. Oversized records (over 1000 KB) are
+dropped too, since Firehose would reject them.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

@@ -10,10 +10,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
+import queue
 import random
 import sys
 import threading
@@ -108,14 +108,27 @@ class Metrics:
         return "\n".join(lines) + "\n"
 
 
-class RecordSink:
-    """Fire-and-forget writer; never blocks or fails a user request."""
+FIREHOSE_MAX_BATCH = 500            # PutRecordBatch limit (records)
+FIREHOSE_MAX_BATCH_BYTES = 4 * 1024 * 1024
+FIREHOSE_MAX_RECORD_BYTES = 1000 * 1024
 
-    def __init__(self, settings: Settings, firehose_client: Any = None):
+
+class RecordSink:
+    """Fire-and-forget writer; never blocks or fails a user request.
+
+    Records go onto a bounded in-memory queue drained by one background thread
+    that writes in batches (PutRecordBatch for Firehose). When the queue is full,
+    new records are dropped and counted rather than slowing down serving.
+    """
+
+    def __init__(self, settings: Settings, firehose_client: Any = None, metrics: Optional[Metrics] = None):
         self.s = settings
         self.kind = settings.record_sink
+        self.metrics = metrics
         self._firehose = firehose_client
-        self._file_lock = threading.Lock()
+        self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=max(1, settings.record_queue_size))
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
         if self.kind == "firehose" and self._firehose is None:
             import boto3  # optional dependency
 
@@ -134,24 +147,92 @@ class RecordSink:
         if not self.s.record_include_text:
             record = {k: v for k, v in record.items() if k not in ("messages", "edge_answer", "cloud_answer")}
         line = json.dumps(record, ensure_ascii=False, default=str)
+        if len(line.encode("utf-8")) > FIREHOSE_MAX_RECORD_BYTES:
+            self._count("records_dropped_total")
+            log.warning("dropping oversized record (%d bytes)", len(line))
+            return
+        self._ensure_worker()
         try:
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, self._write, line)
-        except RuntimeError:
-            self._write(line)
+            self._queue.put_nowait(line)
+        except queue.Full:
+            self._count("records_dropped_total")
 
-    def _write(self, line: str) -> None:
+    def flush(self, timeout_s: float = 5.0) -> None:
+        """Stop the worker after writing everything queued (used on shutdown)."""
+        with self._lock:
+            t = self._thread
+            self._thread = None
+        if t is None:
+            return
+        try:
+            self._queue.put(None, timeout=timeout_s)  # sentinel
+        except queue.Full:
+            return
+        t.join(timeout_s)
+
+    # ------------------------------------------------------------- internals
+    def _count(self, name: str, n: float = 1.0) -> None:
+        if self.metrics is not None:
+            self.metrics.incr(name, n)
+
+    def _ensure_worker(self) -> None:
+        if self._thread is not None:
+            return
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name="record-sink", daemon=True)
+                self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            first = self._queue.get()
+            if first is None:
+                return
+            batch: List[str] = [first]
+            size = len(first)
+            stop = False
+            deadline = time.monotonic() + self.s.record_flush_interval_s
+            while len(batch) < FIREHOSE_MAX_BATCH and size < FIREHOSE_MAX_BATCH_BYTES - FIREHOSE_MAX_RECORD_BYTES:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    nxt = self._queue.get(timeout=remaining)
+                except queue.Empty:
+                    break
+                if nxt is None:
+                    stop = True
+                    break
+                batch.append(nxt)
+                size += len(nxt)
+            self._write_batch(batch)
+            if stop:
+                return
+
+    def _write_batch(self, lines: List[str]) -> None:
         try:
             if self.kind == "stdout":
-                sys.stdout.write(line + "\n")
+                sys.stdout.write("".join(line + "\n" for line in lines))
                 sys.stdout.flush()
             elif self.kind == "file":
-                with self._file_lock, open(self.s.record_path, "a", encoding="utf-8") as fh:
-                    fh.write(line + "\n")
+                with open(self.s.record_path, "a", encoding="utf-8") as fh:
+                    fh.write("".join(line + "\n" for line in lines))
             elif self.kind == "firehose":
-                self._firehose.put_record(
-                    DeliveryStreamName=self.s.record_firehose_stream,
-                    Record={"Data": (line + "\n").encode("utf-8")},
-                )
+                self._put_firehose(lines)
+            self._count("records_written_total", len(lines))
         except Exception:  # noqa: BLE001 - telemetry must never break serving
-            log.exception("failed to write escalation record")
+            log.exception("failed to write %d escalation records", len(lines))
+            self._count("records_failed_total", len(lines))
+
+    def _put_firehose(self, lines: List[str], attempts: int = 3) -> None:
+        pending = lines
+        for attempt in range(attempts):
+            resp = self._firehose.put_record_batch(
+                DeliveryStreamName=self.s.record_firehose_stream,
+                Records=[{"Data": (line + "\n").encode("utf-8")} for line in pending],
+            )
+            if not resp.get("FailedPutCount"):
+                return
+            pending = [line for line, r in zip(pending, resp.get("RequestResponses", [])) if r.get("ErrorCode")]
+            time.sleep(0.2 * (2 ** attempt))
+        raise RuntimeError(f"firehose rejected {len(pending)} records after {attempts} attempts")

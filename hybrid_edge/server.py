@@ -67,13 +67,14 @@ def build_orchestrator(settings: Settings, backend=None, escalator=None, records
         hedge_penalty=settings.gate_hedge_penalty,
         truncation_penalty=settings.gate_truncation_penalty,
     )
+    metrics = Metrics(settings)
     return HybridOrchestrator(
         settings=settings,
         backend=backend or build_backend(settings),
         gate=gate,
         escalator=escalator or ClaudeEscalator(settings),
-        metrics=Metrics(settings),
-        records=records or RecordSink(settings),
+        metrics=metrics,
+        records=records or RecordSink(settings, metrics=metrics),
     )
 
 
@@ -85,6 +86,7 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
     async def lifespan(_: FastAPI):
         yield
         await orch.drain()
+        orch.records.flush()
         await orch.backend.aclose()
         await orch.escalator.aclose()
 
@@ -108,6 +110,10 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
             msgs = [ChatMessage("user", req.prompt)]
         else:
             raise HTTPException(status_code=422, detail="provide `messages` or `prompt`")
+        if len(msgs) > settings.max_messages:
+            raise HTTPException(status_code=413, detail=f"too many messages (max {settings.max_messages})")
+        if sum(len(m.content) for m in msgs) > settings.max_request_chars:
+            raise HTTPException(status_code=413, detail=f"request too large (max {settings.max_request_chars} chars)")
         try:
             res = await orch.infer(msgs, route=req.route, min_confidence=req.min_confidence,
                                    max_tokens=req.max_tokens, use_cache=req.use_cache, caller=caller)

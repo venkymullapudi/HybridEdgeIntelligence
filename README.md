@@ -80,6 +80,8 @@ Each response tells you what happened:
 
 Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set.
 
+Request limits: requests over `max_request_chars` (default 100k) or `max_messages` (default 200) are rejected with 413.
+
 Client policy: set `HEI_ALLOW_CLIENT_OVERRIDES=false` to ignore `route` and `min_confidence` from callers. Even when overrides are allowed, `min_confidence` is capped at `max_client_min_confidence` (default 0.95), so a client can't force every request to Claude.
 
 ## Run locally
