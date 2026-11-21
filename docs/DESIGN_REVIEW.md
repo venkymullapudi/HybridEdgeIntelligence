@@ -301,6 +301,40 @@ many edge chat templates.
 allows at most one system message, which must come first, and the last turn
 must be from the user. Anything else gets a 422 that says what's wrong.
 
+## 29. What does the user get when Claude writes nothing?
+
+**An empty string, presented as a successful cloud answer, and cached.** With
+adaptive thinking, Claude can spend the whole `max_tokens` budget thinking and
+return no text. The gateway returned `""` with `source: cloud`. A cut-off
+answer (`stop_reason: max_tokens`) also came back with no flag.
+
+**Fix:** an escalation that returns no text (and isn't a refusal) counts as
+"cloud unavailable". The request falls back to the edge answer
+(`degraded: true`), or returns a 503 if there's no edge answer. It doesn't trip
+the circuit breaker, since the cloud isn't down. A truncated answer is still
+returned, but with the reason `cloud answer truncated at cloud_max_tokens`.
+Neither is cached.
+
+## 30. What if Claude isn't offered on Bedrock in an edge's region?
+
+**That edge could never escalate.** Each edge called Bedrock in its own region,
+with no override. If the model isn't available there, every escalation fails,
+the breaker opens, and the edge serves only degraded answers.
+
+**Fix:** with Terraform's `bedrock_region_overrides`
+(e.g. `{ "ap-south-1" = "ap-southeast-1" }`), an edge can call Bedrock in a
+nearby region. Unlisted edges keep using their own region.
+
+## 31. Will CI break again on its own?
+
+**It was about to.** The workflow pinned `actions/checkout@v4`,
+`setup-python@v5` and `setup-terraform@v3`, which target Node 20. GitHub
+already forces them onto Node 24 and will eventually drop them. That's the
+same class of silent breakage as question 24.
+
+**Fix:** bumped to `checkout@v7`, `setup-python@v7` and `setup-terraform@v4`
+(each released at least two weeks ago).
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

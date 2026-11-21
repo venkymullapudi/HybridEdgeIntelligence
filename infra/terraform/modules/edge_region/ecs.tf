@@ -282,7 +282,7 @@ resource "aws_ecs_task_definition" "edge" {
         { name = "HEI_CLOUD_PROVIDER", value = var.cloud_provider },
         { name = "HEI_CLOUD_MODEL", value = var.cloud_model },
         { name = "HEI_CLOUD_EFFORT", value = var.cloud_effort },
-        { name = "HEI_CLOUD_AWS_REGION", value = local.region },
+        { name = "HEI_CLOUD_AWS_REGION", value = var.cloud_aws_region != "" ? var.cloud_aws_region : local.region },
         { name = "HEI_CLOUD_MAX_ESCALATIONS_PER_MIN", value = tostring(var.max_escalations_per_min) },
         { name = "HEI_CLOUD_MAX_ESCALATIONS_PER_KEY_PER_MIN", value = tostring(var.max_escalations_per_key_per_min) },
         { name = "HEI_SHADOW_RATE", value = tostring(var.shadow_rate) },

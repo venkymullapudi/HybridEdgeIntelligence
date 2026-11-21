@@ -50,6 +50,7 @@ module "edge_us_east_1" {
   hf_token_secret_arn             = local.secret_arn_in["us-east-1"].hf
   gateway_api_keys_secret_arn     = local.secret_arn_in["us-east-1"].api_keys
   certificate_arn                 = lookup(var.certificate_arns, "us-east-1", "")
+  cloud_aws_region                = lookup(var.bedrock_region_overrides, "us-east-1", "")
   vpc_cidr                        = "10.40.0.0/16"
 }
 
@@ -80,6 +81,7 @@ module "edge_eu_west_1" {
   hf_token_secret_arn             = local.secret_arn_in["eu-west-1"].hf
   gateway_api_keys_secret_arn     = local.secret_arn_in["eu-west-1"].api_keys
   certificate_arn                 = lookup(var.certificate_arns, "eu-west-1", "")
+  cloud_aws_region                = lookup(var.bedrock_region_overrides, "eu-west-1", "")
   vpc_cidr                        = "10.41.0.0/16"
 }
 
@@ -110,6 +112,7 @@ module "edge_ap_south_1" {
   hf_token_secret_arn             = local.secret_arn_in["ap-south-1"].hf
   gateway_api_keys_secret_arn     = local.secret_arn_in["ap-south-1"].api_keys
   certificate_arn                 = lookup(var.certificate_arns, "ap-south-1", "")
+  cloud_aws_region                = lookup(var.bedrock_region_overrides, "ap-south-1", "")
   vpc_cidr                        = "10.42.0.0/16"
 }
 
@@ -140,6 +143,7 @@ module "edge_ap_southeast_1" {
   hf_token_secret_arn             = local.secret_arn_in["ap-southeast-1"].hf
   gateway_api_keys_secret_arn     = local.secret_arn_in["ap-southeast-1"].api_keys
   certificate_arn                 = lookup(var.certificate_arns, "ap-southeast-1", "")
+  cloud_aws_region                = lookup(var.bedrock_region_overrides, "ap-southeast-1", "")
   vpc_cidr                        = "10.43.0.0/16"
 }
 

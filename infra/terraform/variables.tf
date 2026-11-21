@@ -148,3 +148,9 @@ variable "max_escalations_per_key_per_min" {
   type    = number
   default = 120
 }
+
+variable "bedrock_region_overrides" {
+  description = "With cloud_provider = bedrock: edge region -> Bedrock region to call, for edges whose own region doesn't offer the Claude model (e.g. { \"ap-south-1\" = \"ap-southeast-1\" }). Unlisted edges call Bedrock in their own region."
+  type        = map(string)
+  default     = {}
+}

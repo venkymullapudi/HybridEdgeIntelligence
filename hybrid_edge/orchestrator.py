@@ -207,6 +207,8 @@ class HybridOrchestrator:
 
         if cloud.refused:
             reasons.append("cloud model declined the request")
+        if cloud.stop_reason == "max_tokens":
+            reasons.append(f"cloud answer truncated at cloud_max_tokens ({self.s.cloud_max_tokens})")
         if cloud.fallback_used:
             reasons.append(f"served by fallback model {cloud.model}")
         usage: Dict[str, float] = {"cloud_input_tokens": cloud.input_tokens,

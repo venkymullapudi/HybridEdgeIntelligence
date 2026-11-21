@@ -155,7 +155,7 @@ curl -s "http://$(terraform -chdir=infra/terraform output -raw global_endpoint_d
 ```
 
 Notes:
-* **Bedrock instead of an API key:** set `cloud_provider = "bedrock"`. Tasks then call Claude in their own region through IAM. Before you rely on this, check that the model is enabled for your account in every edge region, and that the IAM actions in `modules/edge_region/ecs.tf` match what the Bedrock endpoint you use requires.
+* **Bedrock instead of an API key:** set `cloud_provider = "bedrock"`. Tasks then call Claude in their own region through IAM. If the model isn't offered in an edge's region, point that edge at a nearby one with `bedrock_region_overrides`. Before you rely on this, check that the model is enabled for your account in every edge region, and that the IAM actions in `modules/edge_region/ecs.tf` match what the Bedrock endpoint you use requires.
 * **TLS:** pass `certificate_arns` (one ACM cert per edge region) for HTTPS on 443. Without them, `terraform plan` stops with an error unless you set `allow_insecure_http = true`, which sends client API keys in cleartext and is only suitable for a demo.
 * **Data residency:** `records_residency = "regional"` (the default) keeps each edge's prompts and answers in a bucket in that edge's own region. `"central"` sends them all to one bucket in `home_region`.
 * **Shadow traffic:** `shadow_rate` (default 0.01) costs roughly that fraction of edge-served traffic in extra Claude calls, capped by `shadow_max_per_min`. Set it to 0 to turn shadowing off.

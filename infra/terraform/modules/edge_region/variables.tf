@@ -142,3 +142,9 @@ variable "max_escalations_per_key_per_min" {
   type    = number
   default = 120
 }
+
+variable "cloud_aws_region" {
+  description = "Bedrock region to call. Empty = this edge's own region."
+  type        = string
+  default     = ""
+}

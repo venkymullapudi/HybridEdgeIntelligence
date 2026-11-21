@@ -278,6 +278,11 @@ class ClaudeEscalator:
         fallback_used = any(getattr(b, "type", None) == "fallback" for b in resp.content)
         iterations = getattr(resp.usage, "iterations", None) or []
         fallback_used = fallback_used or any(getattr(i, "type", None) == "fallback_message" for i in iterations)
+        refused = resp.stop_reason == "refusal"
+        if not refused and not text.strip():
+            # e.g. adaptive thinking used the whole max_tokens budget. An empty string is
+            # not an answer: let the caller fall back to the edge answer (or 503).
+            raise CloudUnavailable(f"cloud returned no answer text (stop_reason={resp.stop_reason})")
         in_tok = int(getattr(resp.usage, "input_tokens", 0) or 0)
         out_tok = int(getattr(resp.usage, "output_tokens", 0) or 0)
         return CloudAnswer(
@@ -288,7 +293,7 @@ class ClaudeEscalator:
             output_tokens=out_tok,
             latency_ms=latency_ms,
             cost_usd=estimate_cost(self.s, in_tok, out_tok),
-            refused=resp.stop_reason == "refusal",
+            refused=refused,
             fallback_used=fallback_used,
         )
 
