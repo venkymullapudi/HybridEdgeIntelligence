@@ -106,3 +106,23 @@ def test_main_sets_graceful_shutdown_above_cloud_deadline(monkeypatch):
     monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(kw))
     server.main()
     assert seen["timeout_graceful_shutdown"] == 35
+
+
+def test_latency_histogram_is_cumulative_prometheus():
+    from hybrid_edge.telemetry import LATENCY_BUCKETS_MS, Metrics
+
+    m = Metrics(Settings.from_dict({"emit_emf": False}))
+    for ms in (10, 25, 30, 3000, 200000):
+        m.observe("cloud", True, False, 0.5, ms)
+    text = m.prometheus()
+
+    def bucket(le):
+        line = next(x for x in text.splitlines() if 'source="cloud",le="%s"' % le in x)
+        return int(line.rsplit(" ", 1)[1])
+
+    assert bucket(25) == 2          # le is inclusive: 10 and 25
+    assert bucket(50) == 3
+    assert bucket(5000) == 4
+    assert bucket(LATENCY_BUCKETS_MS[-1]) == 4
+    assert bucket("+Inf") == 5      # equals the count
+    assert 'hybrid_edge_latency_ms_count{region="local",edge_id="edge-local",source="cloud"} 5' in text

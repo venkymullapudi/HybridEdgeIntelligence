@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import bisect
 import json
 import logging
 import os
@@ -25,6 +26,10 @@ from .config import Settings
 
 log = logging.getLogger("hybrid_edge")
 
+# Latency histogram bounds (ms): edge answers land in the low buckets, escalations
+# in the seconds; p95/p99 per source come from histogram_quantile() in Prometheus.
+LATENCY_BUCKETS_MS = [25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000]
+
 
 class Metrics:
     def __init__(self, settings: Settings):
@@ -33,6 +38,8 @@ class Metrics:
         self.counters: Dict[str, float] = defaultdict(float)
         self.latency_sum: Dict[str, float] = defaultdict(float)
         self.latency_count: Dict[str, int] = defaultdict(int)
+        # Per-source histogram counts, one slot per bucket plus +Inf.
+        self.latency_buckets: Dict[str, List[int]] = defaultdict(lambda: [0] * (len(LATENCY_BUCKETS_MS) + 1))
 
     def observe(self, source: str, escalated: bool, degraded: bool, score: Optional[float],
                 latency_ms: float, cloud_tokens: int = 0, cloud_cost: float = 0.0,
@@ -49,6 +56,7 @@ class Metrics:
             self.counters["avoided_cost_usd_total"] += avoided_cost
             self.latency_sum[source] += latency_ms
             self.latency_count[source] += 1
+            self.latency_buckets[source][bisect.bisect_left(LATENCY_BUCKETS_MS, latency_ms)] += 1
         if self.s.emit_emf:
             self._emf(source, escalated, degraded, score, latency_ms, cloud_tokens, cloud_cost, avoided_cost)
 
@@ -100,6 +108,10 @@ class Metrics:
                 lines.append(f"hybrid_edge_{k}{{{labels}}} {v}")
             for src, total in sorted(self.latency_sum.items()):
                 cnt = self.latency_count[src]
+                cumulative = 0
+                for le, n in zip([*map(str, LATENCY_BUCKETS_MS), "+Inf"], self.latency_buckets[src]):
+                    cumulative += n
+                    lines.append(f'hybrid_edge_latency_ms_bucket{{{labels},source="{src}",le="{le}"}} {cumulative}')
                 lines.append(f'hybrid_edge_latency_ms_sum{{{labels},source="{src}"}} {total:.3f}')
                 lines.append(f'hybrid_edge_latency_ms_count{{{labels},source="{src}"}} {cnt}')
             req = self.counters.get("requests_total", 0.0)

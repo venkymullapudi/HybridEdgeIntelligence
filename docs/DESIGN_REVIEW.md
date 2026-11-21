@@ -243,6 +243,39 @@ one-time error explaining the cause. The escalation-rate alarm catches the
 effect. A new test also pins the EMF document format that the alarm depends on:
 every declared metric has a numeric value, and every dimension is present.
 
+## 24. Has CI ever passed?
+
+**No. Every run since the first commit failed.** `ubuntu-latest` moved to
+Ubuntu 26.04, which has no Python 3.9 build, so `setup-python` failed before any
+test ran. `fail-fast` then cancelled the 3.12 job, which hid whether it would
+have passed. Local checks were green the whole time, so nothing looked wrong.
+
+**Fix:** the test job runs on `ubuntu-24.04` (which has 3.9 and 3.12), with
+`fail-fast: false`. The first green run was `54ce9b2`: tests on 3.9 and 3.12,
+Terraform validate, and the Docker build all passed. The improvement loop now
+reads CI results through GitHub's public API, so a failure can't go unnoticed
+again.
+
+## 25. What is the p99 latency of an escalation?
+
+**Unknowable.** `/metrics` exported a latency sum and count per source, which
+gives only the mean. Escalations make the latency distribution long-tailed, and
+the mean hides exactly what users feel.
+
+**Fix:** a Prometheus histogram, `hybrid_edge_latency_ms_bucket`, per source
+(edge, cloud, cache), with buckets from 25 ms to 120 s. Use
+`histogram_quantile(0.99, ...)` for p99 per source.
+
+## 26. Can a dependency release break production with no code change?
+
+**Yes.** The requirements had floors but no ceilings, and `anthropic>=0.75`
+already resolved to 2.x in the image. The next major release of the SDK,
+FastAPI or uvicorn would have shipped on the next image build, untested.
+
+**Fix:** every runtime and dev dependency has an upper bound at the next major
+(`anthropic<3`, `fastapi<1`, and so on). CI covers both ends of the supported
+range: Python 3.9 resolves the oldest versions, and 3.12 the newest.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
