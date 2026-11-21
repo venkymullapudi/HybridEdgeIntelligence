@@ -141,6 +141,7 @@ class RecordSink:
         self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=max(1, settings.record_queue_size))
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self.queued_bytes = 0
         if self.kind == "firehose" and self._firehose is None:
             import boto3  # optional dependency
 
@@ -163,10 +164,17 @@ class RecordSink:
             self._count("records_dropped_total")
             log.warning("dropping oversized record (%d bytes)", len(line))
             return
+        size = len(line)
+        with self._lock:
+            if self.queued_bytes + size > self.s.record_queue_max_bytes:
+                self._count("records_dropped_total")
+                return
+            self.queued_bytes += size
         self._ensure_worker()
         try:
             self._queue.put_nowait(line)
         except queue.Full:
+            self._release(size)
             self._count("records_dropped_total")
 
     def flush(self, timeout_s: float = 5.0) -> None:
@@ -187,6 +195,10 @@ class RecordSink:
         if self.metrics is not None:
             self.metrics.incr(name, n)
 
+    def _release(self, size: int) -> None:
+        with self._lock:
+            self.queued_bytes -= size
+
     def _ensure_worker(self) -> None:
         if self._thread is not None:
             return
@@ -200,6 +212,7 @@ class RecordSink:
             first = self._queue.get()
             if first is None:
                 return
+            self._release(len(first))
             batch: List[str] = [first]
             size = len(first)
             stop = False
@@ -215,6 +228,7 @@ class RecordSink:
                 if nxt is None:
                     stop = True
                     break
+                self._release(len(nxt))
                 batch.append(nxt)
                 size += len(nxt)
             self._write_batch(batch)

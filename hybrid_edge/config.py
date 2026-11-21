@@ -106,6 +106,7 @@ class Settings:
     # --- caching ---------------------------------------------------------
     cache_size: int = 10000
     cache_ttl_s: float = 3600.0
+    cache_max_bytes: int = 128 * 1024 * 1024
     # Off: cache entries are scoped to the caller's API key (no cross-tenant answers).
     cache_shared_across_keys: bool = False
 
@@ -121,6 +122,8 @@ class Settings:
     # Fraction of confident (non-escalated) requests also recorded, for gate calibration.
     record_sample_rate_confident: float = 0.02
     record_queue_size: int = 10000
+    # Also bound queued records by bytes: one record can be up to ~1 MB.
+    record_queue_max_bytes: int = 64 * 1024 * 1024
     record_flush_interval_s: float = 1.0
 
     # --- server ----------------------------------------------------------

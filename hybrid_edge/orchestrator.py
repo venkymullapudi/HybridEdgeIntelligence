@@ -51,6 +51,11 @@ class InferenceResult:
     refused: bool = False
 
 
+def result_size(r: "InferenceResult") -> int:
+    """Approximate memory held by a cached result: the answer dominates."""
+    return 2048 + 4 * len(r.answer) + sum(4 * len(x) for x in r.reasons)
+
+
 def caller_id(api_key: Optional[str]) -> str:
     """Stable, non-reversible identifier for budgets, cache scoping and records."""
     if not api_key:
@@ -74,7 +79,8 @@ class HybridOrchestrator:
         self.escalator = escalator
         self.metrics = metrics
         self.records = records
-        self.cache: TTLCache[InferenceResult] = TTLCache(settings.cache_size, settings.cache_ttl_s)
+        self.cache: TTLCache[InferenceResult] = TTLCache(settings.cache_size, settings.cache_ttl_s,
+                                                         max_bytes=settings.cache_max_bytes, sizeof=result_size)
         self._inflight: Dict[str, "asyncio.Future[InferenceResult]"] = {}
         self._background: Set["asyncio.Task[Any]"] = set()
         self._warned_no_logprobs = False

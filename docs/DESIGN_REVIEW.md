@@ -359,6 +359,26 @@ would cost.
 rate at each threshold (traffic-weighted, like question 17). You can read off
 the knee of the cost/quality curve before committing to a target.
 
+## 34. How much memory can the gateway's buffers take?
+
+**More than the container has.** Both in-memory buffers were bounded by entry
+count only:
+
+* **Cache:** 10,000 entries. A cached Claude answer can be ~16k tokens
+  (~64 KB), so the cache could reach ~640 MB, in a container that reserves 1 GB.
+* **Record queue:** 10,000 records of up to 1,000 KB each, so ~10 GB in the
+  worst case. That worst case is exactly a Firehose slowdown, which the queue
+  exists to absorb.
+
+An out-of-memory kill takes down the whole edge task, along with every
+in-flight request.
+
+**Fix:** both buffers also have a byte budget. The cache (`cache_max_bytes`,
+default 128 MB) evicts least-recently-used entries until it fits. An entry
+bigger than the whole budget isn't cached, so it can't flush everything else.
+The record queue (`record_queue_max_bytes`, default 64 MB) drops and counts new
+records past its budget, and releases each record's bytes once it's written.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
