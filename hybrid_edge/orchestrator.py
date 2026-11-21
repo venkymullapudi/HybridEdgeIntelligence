@@ -135,7 +135,7 @@ class HybridOrchestrator:
 
         if cacheable_route:
             hit = self.cache.get(key)
-            if hit is not None and (hit.source == "cloud" or (hit.confidence or 0) >= threshold):
+            if hit is not None and self._meets(hit, threshold):
                 return self._copy_shared(hit, t0, "cache hit (originally served by %s)" % hit.source, rid)
             if on_event is not None:
                 # A streamed request needs its own deltas, so it doesn't join single-flight.
@@ -147,7 +147,16 @@ class HybridOrchestrator:
             pending = self._inflight.get(key)
             if pending is not None:
                 res = await asyncio.shield(pending)
-                return self._copy_shared(res, t0, "coalesced with an identical in-flight request", rid)
+                if self._meets(res, threshold):
+                    return self._copy_shared(res, t0, "coalesced with an identical in-flight request", rid)
+                if res.degraded:
+                    # The cloud just failed for this exact request: retrying now would fail the
+                    # same way, so share the edge answer, but say it's degraded.
+                    return self._copy_shared(res, t0, "coalesced with an identical in-flight request", rid,
+                                             keep_degraded=True)
+                # The leader accepted an answer this caller's stricter threshold rejects.
+                return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes,
+                                         rid)
             task = asyncio.ensure_future(
                 self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes, rid))
             self._inflight[key] = task
@@ -155,6 +164,11 @@ class HybridOrchestrator:
             return await asyncio.shield(task)
         return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes, rid,
                                  on_event)
+
+    @staticmethod
+    def _meets(res: InferenceResult, threshold: float) -> bool:
+        """Can this caller (with its threshold) be given a result computed for another?"""
+        return not res.degraded and (res.source == "cloud" or (res.confidence or 0.0) >= threshold)
 
     def _settle(self, key: str, task: "asyncio.Future[InferenceResult]") -> None:
         if self._inflight.get(key) is task:
@@ -386,11 +400,12 @@ class HybridOrchestrator:
             usage=usage,
         )
 
-    def _copy_shared(self, hit: InferenceResult, t0: float, reason: str, rid: str) -> InferenceResult:
-        res = replace(hit, request_id=rid, source="cache", escalated=False, degraded=False,
+    def _copy_shared(self, hit: InferenceResult, t0: float, reason: str, rid: str,
+                     keep_degraded: bool = False) -> InferenceResult:
+        res = replace(hit, request_id=rid, source="cache", escalated=False, degraded=keep_degraded and hit.degraded,
                       latency_ms=(time.perf_counter() - t0) * 1000, edge_latency_ms=None, cloud_latency_ms=None,
                       cloud_first_token_ms=None,
-                      reasons=[reason])
+                      reasons=[reason] + (list(hit.reasons) if keep_degraded else []))
         avoided = hit.usage.get("cloud_cost_usd") or hit.usage.get("avoided_cost_usd") or 0.0
         res.usage = {"avoided_cost_usd": avoided}
         self.metrics.observe("cache", False, False, hit.confidence, res.latency_ms, avoided_cost=avoided)

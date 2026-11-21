@@ -479,6 +479,32 @@ opposite responses on-call: raise a budget, or wait out an outage.
 `key_budget`, `shadow_budget`, `breaker`, `disabled`, `error`, `deadline`,
 `empty` and `rejected`.
 
+## 42. Does coalescing respect each caller's threshold?
+
+**No. It broke two guarantees.** The cache path checked that a stored result
+met *this* request's threshold, but the single-flight path handed the leader's
+result to every waiter unchecked:
+
+* **Weaker answers to stricter callers:** if the leader sent
+  `min_confidence: 0.5` and was served an edge answer at confidence 0.6, an
+  identical concurrent request with `min_confidence: 0.9` received that same
+  0.6 answer. Its own requirement was silently violated.
+* **Hidden outages:** if the leader's escalation failed (`degraded: true`),
+  every waiter's copy reported `degraded: false`, because the shared-copy
+  helper reset the flag.
+
+**Fix:** one rule, `_meets`, decides whether a result computed for another
+caller can be reused. The cache and coalescing paths both use it: the result
+must not be degraded, and must come from Claude or meet this caller's threshold.
+
+* A waiter whose stricter threshold rejects the leader's answer runs its own
+  request.
+* A degraded result is still shared, since the cloud just failed for this exact
+  request and retrying would only add load. But it keeps `degraded: true` and
+  the original reasons.
+
+Regression tests fail on the previous code.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
