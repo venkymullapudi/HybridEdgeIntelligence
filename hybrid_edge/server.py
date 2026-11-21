@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hmac
+import re
+import uuid
 import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,8 @@ from .orchestrator import HybridOrchestrator, ServiceUnavailable, caller_id
 from .telemetry import Metrics, RecordSink
 
 log = logging.getLogger("hybrid_edge")
+
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 class Message(BaseModel):
@@ -126,25 +130,31 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
         return caller_id(supplied)
 
     @app.post("/v1/infer", response_model=InferResponse)
-    async def infer(req: InferRequest, caller: str = Depends(auth)) -> InferResponse:
+    async def infer(req: InferRequest, response: Response, caller: str = Depends(auth),
+                    x_request_id: Optional[str] = Header(None)) -> InferResponse:
+        # Keep a client's correlation ID if it's safe to echo and log; otherwise mint one.
+        rid = x_request_id if x_request_id and REQUEST_ID_RE.match(x_request_id) else uuid.uuid4().hex
+        response.headers["X-Request-ID"] = rid
+        hdrs = {"X-Request-ID": rid}
         if req.messages:
             msgs = [ChatMessage(m.role, m.content) for m in req.messages]
         elif req.prompt is not None:
             msgs = [ChatMessage("user", req.prompt)]
         else:
-            raise HTTPException(status_code=422, detail="provide `messages` or `prompt`")
+            raise HTTPException(status_code=422, detail="provide `messages` or `prompt`", headers=hdrs)
         problem = conversation_problem(msgs)
         if problem:
-            raise HTTPException(status_code=422, detail=problem)
+            raise HTTPException(status_code=422, detail=problem, headers=hdrs)
         if len(msgs) > settings.max_messages:
-            raise HTTPException(status_code=413, detail=f"too many messages (max {settings.max_messages})")
+            raise HTTPException(status_code=413, detail=f"too many messages (max {settings.max_messages})", headers=hdrs)
         if sum(len(m.content) for m in msgs) > settings.max_request_chars:
-            raise HTTPException(status_code=413, detail=f"request too large (max {settings.max_request_chars} chars)")
+            raise HTTPException(status_code=413, detail=f"request too large (max {settings.max_request_chars} chars)", headers=hdrs)
         try:
             res = await orch.infer(msgs, route=req.route, min_confidence=req.min_confidence,
-                                   max_tokens=req.max_tokens, use_cache=req.use_cache, caller=caller)
+                                   max_tokens=req.max_tokens, use_cache=req.use_cache, caller=caller,
+                                   request_id=rid)
         except ServiceUnavailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail=str(exc), headers=hdrs) from exc
         out = InferResponse(**{k: v for k, v in res.__dict__.items() if k in InferResponse.model_fields})
         if not req.include_signals:
             out.signals = None

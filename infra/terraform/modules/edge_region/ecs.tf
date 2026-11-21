@@ -276,6 +276,7 @@ resource "aws_ecs_task_definition" "edge" {
         { name = "HEI_EDGE_BACKEND", value = "openai" },
         { name = "HEI_EDGE_BASE_URL", value = "http://127.0.0.1:8000/v1" },
         { name = "HEI_EDGE_MODEL", value = var.edge_model },
+        { name = "HEI_EDGE_SYSTEM_ROLE", value = var.edge_system_role },
         { name = "HEI_EDGE_CONTEXT_TOKENS", value = tostring(var.edge_max_model_len) },
         { name = "HEI_GATE_THRESHOLD", value = tostring(var.gate_threshold) },
         { name = "HEI_GATE_CONSISTENCY_SAMPLES", value = tostring(var.gate_consistency_samples) },

@@ -101,3 +101,19 @@ def conversation_problem(messages: List[ChatMessage]) -> Optional[str]:
     if turns[-1].role != "user":
         return "the last message must be from the user (assistant prefill is not supported)"
     return None
+
+
+def edge_messages(messages: List[ChatMessage], system_role: str) -> List[ChatMessage]:
+    """Adapt a conversation to the edge model's chat template.
+
+    ``native`` sends the system message as is. ``merge`` folds it into the first user
+    turn, for models whose templates reject a system role (e.g. Gemma), which would
+    otherwise fail every edge call and escalate everything."""
+    if system_role != "merge" or not messages or messages[0].role != "system":
+        return messages
+    system, rest = messages[0], list(messages[1:])
+    for i, m in enumerate(rest):
+        if m.role == "user":
+            rest[i] = ChatMessage("user", f"{system.content}\n\n{m.content}" if system.content else m.content)
+            return rest
+    return rest

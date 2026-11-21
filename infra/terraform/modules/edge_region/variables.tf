@@ -148,3 +148,8 @@ variable "cloud_aws_region" {
   type        = string
   default     = ""
 }
+
+variable "edge_system_role" {
+  type    = string
+  default = "native"
+}

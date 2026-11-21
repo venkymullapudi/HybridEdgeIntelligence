@@ -18,6 +18,7 @@ locals {
     record_include_text      = var.record_include_text
     ingress_cidrs            = var.ingress_cidrs
     shadow_rate              = var.shadow_rate
+    edge_system_role         = var.edge_system_role
     per_key                  = var.max_escalations_per_key_per_min
     records_bucket_arn       = var.records_residency == "central" ? aws_s3_bucket.records[0].arn : ""
   }
@@ -31,6 +32,7 @@ module "edge_us_east_1" {
   name                            = local.edge_args.name
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
+  edge_system_role                = local.edge_args.edge_system_role
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes
@@ -62,6 +64,7 @@ module "edge_eu_west_1" {
   name                            = local.edge_args.name
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
+  edge_system_role                = local.edge_args.edge_system_role
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes
@@ -93,6 +96,7 @@ module "edge_ap_south_1" {
   name                            = local.edge_args.name
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
+  edge_system_role                = local.edge_args.edge_system_role
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes
@@ -124,6 +128,7 @@ module "edge_ap_southeast_1" {
   name                            = local.edge_args.name
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
+  edge_system_role                = local.edge_args.edge_system_role
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes

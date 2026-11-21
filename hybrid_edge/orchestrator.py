@@ -12,7 +12,8 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .backends.base import ChatMessage, EdgeBackend, EdgeBackendError, Generation, TokenInfo, estimate_tokens
+from .backends.base import (ChatMessage, EdgeBackend, EdgeBackendError, Generation, TokenInfo, edge_messages,
+                            estimate_tokens)
 from .cache import TTLCache, cache_key
 from .cloud.claude import ClaudeEscalator, CloudAnswer, CloudUnavailable, estimate_cost
 from .config import Settings
@@ -95,8 +96,10 @@ class HybridOrchestrator:
         max_tokens: Optional[int] = None,
         use_cache: bool = True,
         caller: str = ANON,
+        request_id: Optional[str] = None,
     ) -> InferenceResult:
         t0 = time.perf_counter()
+        rid = request_id or uuid.uuid4().hex
         if not any(m.role != "system" for m in messages):
             messages = messages + [ChatMessage("user", "")]
         if not any(m.role == "system" for m in messages):
@@ -119,20 +122,20 @@ class HybridOrchestrator:
         if cacheable_route:
             hit = self.cache.get(key)
             if hit is not None and (hit.source == "cloud" or (hit.confidence or 0) >= threshold):
-                return self._copy_shared(hit, t0, "cache hit (originally served by %s)" % hit.source)
+                return self._copy_shared(hit, t0, "cache hit (originally served by %s)" % hit.source, rid)
             # Single-flight: identical concurrent requests share one computation. It runs
             # as its own task, so a caller disconnecting (cancellation) never cancels the
             # work other callers are waiting on.
             pending = self._inflight.get(key)
             if pending is not None:
                 res = await asyncio.shield(pending)
-                return self._copy_shared(res, t0, "coalesced with an identical in-flight request")
+                return self._copy_shared(res, t0, "coalesced with an identical in-flight request", rid)
             task = asyncio.ensure_future(
-                self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes))
+                self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes, rid))
             self._inflight[key] = task
             task.add_done_callback(lambda t, k=key: self._settle(k, t))
             return await asyncio.shield(task)
-        return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes)
+        return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes, rid)
 
     def _settle(self, key: str, task: "asyncio.Future[InferenceResult]") -> None:
         if self._inflight.get(key) is task:
@@ -146,8 +149,8 @@ class HybridOrchestrator:
             await asyncio.gather(*list(self._background), *list(self._inflight.values()), return_exceptions=True)
 
     # ---------------------------------------------------------------- internal
-    async def _infer(self, messages, route, threshold, max_tokens, caller, key, t0, policy_notes) -> InferenceResult:
-        rid = uuid.uuid4().hex
+    async def _infer(self, messages, route, threshold, max_tokens, caller, key, t0, policy_notes,
+                     rid) -> InferenceResult:
         reasons: List[str] = list(policy_notes)
         primary: Optional[Generation] = None
         signals: Optional[Signals] = None
@@ -230,6 +233,7 @@ class HybridOrchestrator:
         return result
 
     async def _edge(self, messages, max_tokens, threshold, route, caller) -> Tuple[Generation, Signals, GateDecision]:
+        messages = edge_messages(messages, self.s.edge_system_role)
         mt = max_tokens
         # Only abort early when the answer can actually be escalated; otherwise a
         # complete (if shaky) edge answer beats a truncated one.
@@ -341,8 +345,8 @@ class HybridOrchestrator:
             usage=usage,
         )
 
-    def _copy_shared(self, hit: InferenceResult, t0: float, reason: str) -> InferenceResult:
-        res = replace(hit, request_id=uuid.uuid4().hex, source="cache", escalated=False, degraded=False,
+    def _copy_shared(self, hit: InferenceResult, t0: float, reason: str, rid: str) -> InferenceResult:
+        res = replace(hit, request_id=rid, source="cache", escalated=False, degraded=False,
                       latency_ms=(time.perf_counter() - t0) * 1000, edge_latency_ms=None, cloud_latency_ms=None,
                       reasons=[reason])
         avoided = hit.usage.get("cloud_cost_usd") or hit.usage.get("avoided_cost_usd") or 0.0

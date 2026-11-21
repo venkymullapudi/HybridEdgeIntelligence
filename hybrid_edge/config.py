@@ -42,6 +42,9 @@ class Settings:
     edge_top_logprobs: int = 5
     edge_timeout_s: float = 30.0
     edge_context_tokens: int = 8192
+    # "native" sends the system message; "merge" folds it into the first user turn, for
+    # edge models whose chat template rejects a system role (e.g. Gemma).
+    edge_system_role: str = "native"
     # Below this much room left in the edge context, skip the edge and escalate.
     edge_min_answer_tokens: int = 256
     # Escalate instead of waiting when the edge model is slower than this (0 = off).
@@ -179,6 +182,8 @@ class Settings:
                      "gate_abort_window_prob"):
             if not 0.0 <= getattr(self, name) <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
+        if self.edge_system_role not in ("native", "merge"):
+            raise ValueError("edge_system_role must be native or merge")
         if self.cloud_effort not in ("low", "medium", "high", "xhigh", "max"):
             raise ValueError("cloud_effort must be low|medium|high|xhigh|max")
 

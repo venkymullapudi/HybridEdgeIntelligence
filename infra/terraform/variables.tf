@@ -154,3 +154,13 @@ variable "bedrock_region_overrides" {
   type        = map(string)
   default     = {}
 }
+
+variable "edge_system_role" {
+  description = "native, or merge for edge models whose chat template rejects a system role (e.g. Gemma)."
+  type        = string
+  default     = "native"
+  validation {
+    condition     = contains(["native", "merge"], var.edge_system_role)
+    error_message = "edge_system_role must be native or merge."
+  }
+}

@@ -379,6 +379,32 @@ bigger than the whole budget isn't cached, so it can't flush everything else.
 The record queue (`record_queue_max_bytes`, default 64 MB) drops and counts new
 records past its budget, and releases each record's bytes once it's written.
 
+## 35. What if the edge model's chat template has no system role?
+
+**Every edge call fails, and everything escalates.** The gateway always sends a
+system message, injecting the default prompt when the client sends none. Some
+popular open-weight models reject a system role: Gemma's chat template raises
+"System role not supported". Swapping to one of them turns the edge into a
+pass-through to Claude at full cost. Only the escalation-rate alarm would
+notice.
+
+**Fix:** `edge_system_role = "merge"` folds the system prompt into the first
+user turn for the edge model. Claude still gets a real system prompt.
+`native` (the default) is unchanged. The setting is exposed in Terraform as
+`edge_system_role`.
+
+## 36. Can you follow one request through the system?
+
+**Not easily.** Each response body had a `request_id`, but there was no response
+header, and a client's own correlation ID was ignored. Tracing a user's report
+to gateway logs and the escalation record meant guessing.
+
+**Fix:** the gateway accepts `X-Request-ID` from the client when it's safe to
+echo and log (`[A-Za-z0-9._-]{1,64}`), or generates one. It returns the ID as a
+response header (on errors too) and in the body, and uses it in escalation and
+shadow records. Requests answered from the cache or coalesced keep their own
+ID.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
