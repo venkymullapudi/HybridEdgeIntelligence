@@ -28,7 +28,15 @@ BEDROCK_FALLBACK_MODEL = "anthropic.claude-opus-4-8"
 
 
 class CloudUnavailable(RuntimeError):
-    """Cloud escalation was skipped or failed; caller should degrade gracefully."""
+    """Cloud escalation was skipped or failed; caller should degrade gracefully.
+
+    ``reason`` is a stable, low-cardinality label for metrics: our own throttling
+    (budget, key_budget, shadow_budget, breaker, disabled) reads very differently
+    on-call from Claude failing (error, deadline, empty, rejected)."""
+
+    def __init__(self, message: str, reason: str = "error"):
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass
@@ -232,24 +240,24 @@ class ClaudeEscalator:
     def _admit(self, caller: str, shadow: bool) -> None:
         """Breaker and budget checks; raises CloudUnavailable, consumes a token on success."""
         if not self.enabled:
-            raise CloudUnavailable("cloud escalation disabled")
+            raise CloudUnavailable("cloud escalation disabled", "disabled")
         if shadow:
             # Shadow traffic is optional: never probe a half-open breaker with it.
             if self.breaker.state != "closed":
-                raise CloudUnavailable("circuit breaker not closed")
+                raise CloudUnavailable("circuit breaker not closed", "breaker")
             if not self.shadow_bucket.take():
-                raise CloudUnavailable("shadow budget exhausted")
+                raise CloudUnavailable("shadow budget exhausted", "shadow_budget")
             return
         if not self.breaker.allow():
-            raise CloudUnavailable("circuit breaker open")
+            raise CloudUnavailable("circuit breaker open", "breaker")
         key_bucket = self.key_buckets.get(caller)
         if not key_bucket.take():
             self.breaker.release()
-            raise CloudUnavailable("per-key escalation budget exhausted")
+            raise CloudUnavailable("per-key escalation budget exhausted", "key_budget")
         if not self.bucket.take():
             key_bucket.refund()
             self.breaker.release()
-            raise CloudUnavailable("escalation budget exhausted")
+            raise CloudUnavailable("escalation budget exhausted", "budget")
 
     async def _guard(self, awaitable: Awaitable[Any]) -> Any:
         """Run one cloud call under the deadline, mapping failures for the breaker."""
@@ -259,11 +267,11 @@ class ClaudeEscalator:
             resp = await asyncio.wait_for(awaitable, timeout=self.s.cloud_deadline_s)
         except asyncio.TimeoutError as exc:
             self.breaker.failure()
-            raise CloudUnavailable(f"cloud deadline of {self.s.cloud_deadline_s}s exceeded") from exc
+            raise CloudUnavailable(f"cloud deadline of {self.s.cloud_deadline_s}s exceeded", "deadline") from exc
         except anthropic.BadRequestError as exc:
             # A malformed request is our bug, not a cloud outage: don't trip the breaker.
             self.breaker.release()
-            raise CloudUnavailable(f"cloud rejected request: {exc}") from exc
+            raise CloudUnavailable(f"cloud rejected request: {exc}", "rejected") from exc
         except (anthropic.RateLimitError, anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
             self.breaker.failure()
             raise CloudUnavailable(f"cloud error: {type(exc).__name__}: {exc}") from exc
@@ -283,7 +291,7 @@ class ClaudeEscalator:
         if not refused and not text.strip():
             # e.g. adaptive thinking used the whole max_tokens budget. An empty string is
             # not an answer: let the caller fall back to the edge answer (or 503).
-            raise CloudUnavailable(f"cloud returned no answer text (stop_reason={resp.stop_reason})")
+            raise CloudUnavailable(f"cloud returned no answer text (stop_reason={resp.stop_reason})", "empty")
         in_tok = int(getattr(resp.usage, "input_tokens", 0) or 0)
         out_tok = int(getattr(resp.usage, "output_tokens", 0) or 0)
         return CloudAnswer(

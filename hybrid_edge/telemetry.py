@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .config import Settings
 
@@ -42,6 +42,7 @@ class Metrics:
         self.latency_buckets: Dict[str, List[int]] = defaultdict(lambda: [0] * (len(LATENCY_BUCKETS_MS) + 1))
         self.first_token_buckets: List[int] = [0] * (len(LATENCY_BUCKETS_MS) + 1)
         self.first_token_sum = 0.0
+        self.labeled: Dict[Tuple[str, str, str], float] = defaultdict(float)
 
     def observe(self, source: str, escalated: bool, degraded: bool, score: Optional[float],
                 latency_ms: float, cloud_tokens: int = 0, cloud_cost: float = 0.0,
@@ -67,6 +68,10 @@ class Metrics:
         with self._lock:
             self.first_token_buckets[bisect.bisect_left(LATENCY_BUCKETS_MS, ms)] += 1
             self.first_token_sum += ms
+
+    def incr_labeled(self, name: str, label: str, value: str, n: float = 1.0) -> None:
+        with self._lock:
+            self.labeled[(name, label, value)] += n
 
     def incr(self, name: str, value: float = 1.0) -> None:
         with self._lock:
@@ -132,6 +137,8 @@ class Metrics:
                     lines.append(f'hybrid_edge_cloud_first_token_ms_bucket{{{labels},le="{le}"}} {cumulative}')
                 lines.append(f"hybrid_edge_cloud_first_token_ms_sum{{{labels}}} {self.first_token_sum:.3f}")
                 lines.append(f"hybrid_edge_cloud_first_token_ms_count{{{labels}}} {n_ft}")
+            for (name, label, value), v in sorted(self.labeled.items()):
+                lines.append(f'hybrid_edge_{name}{{{labels},{label}="{value}"}} {v}')
             lines.append(f"hybrid_edge_escalation_rate{{{labels}}} {(esc / req) if req else 0.0:.4f}")
         return "\n".join(lines) + "\n"
 

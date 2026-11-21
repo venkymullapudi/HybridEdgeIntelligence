@@ -88,6 +88,13 @@ class HybridOrchestrator:
         self._inflight: Dict[str, "asyncio.Future[InferenceResult]"] = {}
         self._background: Set["asyncio.Task[Any]"] = set()
         self._warned_no_logprobs = False
+        # Shadow calls only exist to produce labelled records: without stored records,
+        # or without their text (nothing for the judge to compare), they're pure spend.
+        self._shadow_useful = (settings.shadow_rate > 0 and escalator.enabled
+                               and records.kind != "none" and settings.record_include_text)
+        if settings.shadow_rate > 0 and not self._shadow_useful:
+            log.warning("shadow_rate=%s ignored: shadow calls need record_sink != none and "
+                        "record_include_text=true to produce calibration data", settings.shadow_rate)
 
     # ------------------------------------------------------------------ public
     async def infer(
@@ -239,6 +246,7 @@ class HybridOrchestrator:
             if streamed[0]:
                 reasons.append(f"cloud stream stopped after {streamed[0]} chars; the final answer replaces it")
             self.metrics.incr("cloud_errors_total")
+            self.metrics.incr_labeled("cloud_unavailable_total", "reason", exc.reason)
             if primary is None:
                 raise ServiceUnavailable("; ".join(reasons)) from exc
             result = self._result(rid, t0, primary.text, "edge", True, True, decision, threshold, reasons,
@@ -336,7 +344,7 @@ class HybridOrchestrator:
         return check
 
     def _maybe_shadow(self, result: InferenceResult, messages, primary: Generation, caller: str) -> None:
-        if self.s.shadow_rate <= 0 or not self.escalator.enabled or random.random() >= self.s.shadow_rate:
+        if not self._shadow_useful or random.random() >= self.s.shadow_rate:
             return
 
         async def shadow() -> None:

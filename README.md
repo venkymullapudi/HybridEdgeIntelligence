@@ -77,7 +77,7 @@ Each response tells you what happened:
 | `POST /v1/infer/stream` | The same request, as server-sent events. Edge and cached answers arrive as one `done` event. An escalation sends `escalating`, then `delta` events as Claude writes, then `done` (always authoritative, with `cloud_first_token_ms`). Failure ends with `error`. Idle gaps carry `: ping` heartbeats |
 | `GET /healthz` | liveness check for the gateway process |
 | `GET /readyz` | readiness: returns 503 when the local model is down. ALB and Global Accelerator use it to drain an edge |
-| `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, per-source latency histograms (for p95/p99), cloud tokens and cost. Needs an API key when keys are configured |
+| `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, cloud-unavailable counts by reason, per-source latency histograms (for p95/p99), cloud tokens and cost. Needs an API key when keys are configured |
 
 Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set. Without configured keys, budgets and cache scope are per client address: the rightmost `X-Forwarded-For` hop, as appended by the ALB. Set `HEI_TRUST_FORWARDED_FOR=false` when there's no load balancer in front.
 
@@ -163,7 +163,7 @@ Notes:
 * **Bedrock instead of an API key:** set `cloud_provider = "bedrock"`. Tasks then call Claude in their own region through IAM. If the model isn't offered in an edge's region, point that edge at a nearby one with `bedrock_region_overrides`. Before you rely on this, check that the model is enabled for your account in every edge region, and that the IAM actions in `modules/edge_region/ecs.tf` match what the Bedrock endpoint you use requires.
 * **TLS:** pass `certificate_arns` (one ACM cert per edge region) for HTTPS on 443. Without them, `terraform plan` stops with an error unless you set `allow_insecure_http = true`, which sends client API keys in cleartext and is only suitable for a demo.
 * **Data residency:** `records_residency = "regional"` (the default) keeps each edge's prompts and answers in a bucket in that edge's own region. `"central"` sends them all to one bucket in `home_region`.
-* **Shadow traffic:** `shadow_rate` (default 0.01) costs roughly that fraction of edge-served traffic in extra Claude calls, capped by `shadow_max_per_min`. Set it to 0 to turn shadowing off.
+* **Shadow traffic:** `shadow_rate` (default 0.01) costs roughly that fraction of edge-served traffic in extra Claude calls, capped by `shadow_max_per_min`. Set it to 0 to turn shadowing off. It's ignored, with a startup warning, unless records are kept with their text, since otherwise nothing could be calibrated from them.
 * **Cost:** each edge runs at least one g6.xlarge GPU node plus a NAT gateway. Set `min_nodes = 0` on regions you only want as burst capacity.
 * **Model choice:** Qwen2.5-7B-Instruct (Apache-2.0) fits on a single L4. For gated models such as Llama, set `enable_hf_token = true` and store your Hugging Face token.
 * The ECR replication configuration is account-wide. Set `manage_ecr_replication = false` if you already manage it somewhere else.

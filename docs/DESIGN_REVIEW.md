@@ -456,6 +456,29 @@ the Claude call to its first text) in the `done` event. `/metrics` exports a
 histograms. A large gap between the two is what streaming saves. A large
 first-token time means thinking dominates: try a lower `cloud_effort`.
 
+## 40. Can shadow traffic cost money and produce nothing?
+
+**Yes.** A shadow call exists only to produce a labelled record. With
+`record_sink = "none"` the record is discarded. With
+`record_include_text = false` it has no answers for the judge to compare. In
+either case, every shadow call was billed Claude usage with no use.
+
+**Fix:** shadow calls run only when the active record sink keeps records with
+their text. Otherwise `shadow_rate` is ignored, with a warning at startup that
+says why.
+
+## 41. When the gateway serves degraded answers, why?
+
+**You couldn't tell.** `cloud_errors_total` counted every failed escalation
+together: our own throttling (node or per-key budget, open breaker) and Claude
+failing (errors, deadlines, empty answers, rejected requests). Those call for
+opposite responses on-call: raise a budget, or wait out an outage.
+
+**Fix:** each failure carries a stable reason, and `/metrics` exports
+`hybrid_edge_cloud_unavailable_total{reason=...}`. The reasons are `budget`,
+`key_budget`, `shadow_budget`, `breaker`, `disabled`, `error`, `deadline`,
+`empty` and `rejected`.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
