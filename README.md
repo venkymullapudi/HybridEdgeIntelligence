@@ -27,7 +27,7 @@ and hard requests still get frontier-model quality.
 
 ## How a request flows
 
-1. **Cache and coalescing.** Repeated prompts are answered from an in-process TTL cache. Entries are scoped to the caller's API key, so one tenant never sees another's answers. Identical requests that arrive at the same time share one computation (single-flight), so a burst of the same hard prompt makes one Claude call, not fifty.
+1. **Cache and coalescing.** Repeated prompts are answered from an in-process TTL cache. Entries are scoped to the caller's API key, so one tenant never sees another's answers. Keys keep inner whitespace, so prompts that differ only in indentation (code, YAML) never share an answer. Identical requests that arrive at the same time share one computation (single-flight), so a burst of the same hard prompt makes one Claude call, not fifty.
 2. **Pre-gate.** Requests go straight to Claude when the client sends `route: "cloud"` (if the policy allows overrides) or the prompt won't fit the edge model's context window.
 3. **Edge generation, streamed.** vLLM streams the answer with per-token logprobs and top-k alternatives, and the gate watches it as it arrives:
    * **Early abort.** If a window of tokens collapses below `gate_abort_window_prob`, generation stops and the request escalates right away instead of finishing a doomed answer. This only happens when Claude can actually take the request.

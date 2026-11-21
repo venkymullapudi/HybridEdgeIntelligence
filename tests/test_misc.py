@@ -49,7 +49,9 @@ def test_cache_ttl_and_lru():
     c = TTLCache(maxsize=2, ttl_s=100)
     c.put("a", 1); c.put("b", 2); c.get("a"); c.put("c", 3)
     assert c.get("b") is None and c.get("a") == 1
-    assert cache_key([ChatMessage("user", "a  b")]) == cache_key([ChatMessage("user", "a b")])
+    assert cache_key([ChatMessage("user", " a b\r\n")]) == cache_key([ChatMessage("user", "a b")])
+    # Indentation is meaning (code, YAML): must not collide.
+    assert cache_key([ChatMessage("user", "if x:\n    y()\nz()")]) != cache_key([ChatMessage("user", "if x:\n    y()\n    z()")])
 
 
 def test_token_bucket_and_breaker():
@@ -91,3 +93,16 @@ def test_calibrate_cli(tmp_path, capsys):
     calibrate_main([str(path), "-o", str(out)])
     cal = json.loads(out.read_text())
     assert 0 < cal["threshold"] < 1
+
+
+def test_main_sets_graceful_shutdown_above_cloud_deadline(monkeypatch):
+    import uvicorn
+    from hybrid_edge import server
+
+    seen = {}
+    monkeypatch.setenv("HEI_EDGE_BACKEND", "mock")
+    monkeypatch.setenv("HEI_CLOUD_PROVIDER", "none")
+    monkeypatch.setenv("HEI_CLOUD_DEADLINE_S", "30")
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(kw))
+    server.main()
+    assert seen["timeout_graceful_shutdown"] == 35

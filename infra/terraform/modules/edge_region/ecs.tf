@@ -266,6 +266,7 @@ resource "aws_ecs_task_definition" "edge" {
       name              = "gateway"
       image             = var.gateway_image
       essential         = true
+      stopTimeout       = 120 # SIGTERM -> SIGKILL grace; covers uvicorn's 95 s graceful shutdown
       memoryReservation = 1024
       portMappings      = [{ containerPort = 8080, protocol = "tcp" }]
       dependsOn         = [{ containerName = "vllm", condition = "HEALTHY" }]
@@ -289,6 +290,7 @@ resource "aws_ecs_task_definition" "edge" {
         { name = "HEI_RECORD_FIREHOSE_STREAM", value = aws_kinesis_firehose_delivery_stream.records.name },
         { name = "HEI_RECORD_INCLUDE_TEXT", value = tostring(var.record_include_text) },
         { name = "HEI_EMIT_EMF", value = "true" },
+        { name = "HEI_CLOUD_DEADLINE_S", value = "90" },
       ]
       secrets          = local.gateway_secrets
       logConfiguration = local.logs

@@ -15,7 +15,7 @@ resource "aws_lb_target_group" "gateway" {
   protocol             = "HTTP"
   target_type          = "ip"
   vpc_id               = aws_vpc.this.id
-  deregistration_delay = 60
+  deregistration_delay = 100 # > gateway cloud_deadline_s (90 s): let escalations finish on deploy
 
   # /readyz fails when the local open-weight model is down, so the target (and,
   # via Global Accelerator, the whole region if all targets fail) is drained.

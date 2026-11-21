@@ -87,7 +87,7 @@ async def test_min_confidence_override(orch):
 
 async def test_cache_hit_for_escalated_answer(orch, fake_claude):
     await orch.infer(user("hard question"))
-    r = await orch.infer(user("hard   question"))
+    r = await orch.infer(user("  hard question\n"))
     assert r.source == "cache"
     assert len(fake_claude.calls) == 1
 

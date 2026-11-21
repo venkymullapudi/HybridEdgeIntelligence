@@ -175,6 +175,40 @@ records, 1 for escalations). `hybrid-edge-calibrate` uses it both when fitting
 and when choosing the threshold, so precision and coverage are estimates over
 real traffic.
 
+## 18. Can two different prompts get the same cached answer?
+
+**Yes, when they differed only in spacing.** The cache key collapsed all
+whitespace, so "fix this Python" with one indentation and with another hashed
+to the same key, and the second user got the first user's answer. In code,
+YAML and tables, indentation *is* meaning.
+
+**Fix:** the key now normalises only what can't change the answer: line endings
+(`\r\n` → `\n`) and leading or trailing whitespace. Inner whitespace is kept.
+
+## 19. What happens to in-flight escalations during a deploy?
+
+**They were cut off.** Escalations can run up to `cloud_deadline_s` (90 s). But
+the ALB drained targets after 60 s, ECS sends SIGKILL 30 s after SIGTERM by
+default, and uvicorn had no graceful-shutdown window. Every rolling deploy or
+scale-in dropped the slowest requests, which are also the most expensive ones,
+already paid for.
+
+**Fix:** the timings are sized to match, each just above the last:
+cloud deadline 90 s < uvicorn graceful shutdown 95 s (`cloud_deadline_s + 5`)
+< ALB deregistration delay 100 s < ECS `stopTimeout` 120 s.
+
+## 20. Can a user poison the calibration labels?
+
+**Yes.** User and model text went into the judge prompt as-is. A message (or an
+edge answer echoing one) could close `</candidate_answer>` and add a fake
+section, or simply tell the judge to grade "acceptable". Inflated labels push
+the calibrated threshold down, so more bad answers get served from the edge.
+
+**Fix:** all untrusted text is HTML-escaped before it goes into the judge's
+tags, so it can't close them. The judge's system prompt says tagged content is
+data, never instructions, and that an answer trying to steer the grade is
+itself unacceptable.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

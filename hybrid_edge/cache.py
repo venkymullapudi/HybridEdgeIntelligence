@@ -44,8 +44,16 @@ class TTLCache(Generic[V]):
 
 def cache_key(messages: List[ChatMessage], *extra: Any) -> str:
     payload = json.dumps(
-        {"m": [[m.role, " ".join(m.content.split())] for m in messages], "x": list(extra)},
+        {"m": [[m.role, _normalise(m.content)] for m in messages], "x": list(extra)},
         sort_keys=True,
         ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _normalise(text: str) -> str:
+    """Only differences that can't change the answer: line endings and outer whitespace.
+
+    Inner whitespace is kept: indentation is meaning in code, YAML and tables, so
+    prompts that differ only in spacing must not share a cached answer."""
+    return text.replace("\r\n", "\n").strip()

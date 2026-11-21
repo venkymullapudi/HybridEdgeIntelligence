@@ -151,7 +151,10 @@ def main() -> None:
 
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     settings = Settings.load()
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_level="info")
+    # On SIGTERM (deploy / scale-in) let in-flight escalations finish: they can run up
+    # to cloud_deadline_s. ECS stopTimeout and the ALB deregistration delay are sized to match.
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_level="info",
+                timeout_graceful_shutdown=int(settings.cloud_deadline_s) + 5)
 
 
 if __name__ == "__main__":
