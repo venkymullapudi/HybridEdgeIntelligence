@@ -74,6 +74,7 @@ Each response tells you what happened:
 | | |
 |---|---|
 | `POST /v1/infer` | `{"prompt": "…"}` or `{"messages": [{role, content}…]}`. Optional fields: `route` (`auto`, `edge` or `cloud`), `min_confidence` (overrides τ for this request), `max_tokens`, `use_cache`, `include_signals` |
+| `POST /v1/infer/stream` | The same request, as server-sent events. Edge and cached answers arrive as one `done` event. An escalation sends `escalating`, then `delta` events as Claude writes, then `done` (always authoritative). Failure ends with `error` |
 | `GET /healthz` | liveness check for the gateway process |
 | `GET /readyz` | readiness: returns 503 when the local model is down. ALB and Global Accelerator use it to drain an edge |
 | `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, per-source latency histograms (for p95/p99), cloud tokens and cost. Needs an API key when keys are configured |

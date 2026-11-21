@@ -15,6 +15,9 @@ class FakeMessages:
     def __init__(self, parent: "FakeClaude"):
         self.parent = parent
 
+    def stream(self, **kwargs: Any) -> FakeStream:
+        return FakeStream(self, kwargs)
+
     async def create(self, **kwargs: Any):
         self.parent.calls.append(kwargs)
         if self.parent.error is not None:
@@ -28,6 +31,30 @@ class FakeMessages:
         )
 
 
+class FakeStream:
+    def __init__(self, messages: "FakeMessages", kwargs):
+        self.m, self.kwargs = messages, kwargs
+
+    async def __aenter__(self):
+        self.final = await self.m.create(**self.kwargs)  # records the call, raises the error
+        text = self.m.parent.text
+
+        async def gen():
+            for i in range(0, len(text), self.m.parent.chunk):
+                if self.m.parent.stream_error_after is not None and i >= self.m.parent.stream_error_after:
+                    raise self.m.parent.stream_error
+                yield text[i:i + self.m.parent.chunk]
+
+        self.text_stream = gen()
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get_final_message(self):
+        return self.final
+
+
 class FakeClaude:
     """Stands in for anthropic.AsyncAnthropic: only `.beta.messages.create` is used."""
 
@@ -36,6 +63,9 @@ class FakeClaude:
         self.stop_reason = stop_reason
         self.error = error
         self.calls: List[Dict[str, Any]] = []
+        self.chunk = 5
+        self.stream_error_after: Optional[int] = None
+        self.stream_error: Optional[Exception] = None
         self.beta = SimpleNamespace(messages=FakeMessages(self))
 
     async def close(self) -> None:

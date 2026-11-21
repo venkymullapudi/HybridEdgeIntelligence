@@ -10,7 +10,7 @@ import random
 import time
 import uuid
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 from .backends.base import (ChatMessage, EdgeBackend, EdgeBackendError, Generation, TokenInfo, edge_messages,
                             estimate_tokens)
@@ -25,6 +25,7 @@ log = logging.getLogger("hybrid_edge")
 
 REFUSAL_TEXT = "I can't help with that request."
 ANON = "anon"
+EventSink = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
 class ServiceUnavailable(RuntimeError):
@@ -97,7 +98,11 @@ class HybridOrchestrator:
         use_cache: bool = True,
         caller: str = ANON,
         request_id: Optional[str] = None,
+        on_event: Optional[EventSink] = None,
     ) -> InferenceResult:
+        """Answer a conversation. With ``on_event``, an escalation streams: the sink gets
+        an "escalating" event, then "delta" events as Claude writes. The returned result
+        is authoritative either way."""
         t0 = time.perf_counter()
         rid = request_id or uuid.uuid4().hex
         if not any(m.role != "system" for m in messages):
@@ -123,6 +128,10 @@ class HybridOrchestrator:
             hit = self.cache.get(key)
             if hit is not None and (hit.source == "cloud" or (hit.confidence or 0) >= threshold):
                 return self._copy_shared(hit, t0, "cache hit (originally served by %s)" % hit.source, rid)
+            if on_event is not None:
+                # A streamed request needs its own deltas, so it doesn't join single-flight.
+                return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes,
+                                         rid, on_event)
             # Single-flight: identical concurrent requests share one computation. It runs
             # as its own task, so a caller disconnecting (cancellation) never cancels the
             # work other callers are waiting on.
@@ -135,7 +144,8 @@ class HybridOrchestrator:
             self._inflight[key] = task
             task.add_done_callback(lambda t, k=key: self._settle(k, t))
             return await asyncio.shield(task)
-        return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes, rid)
+        return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes, rid,
+                                 on_event)
 
     def _settle(self, key: str, task: "asyncio.Future[InferenceResult]") -> None:
         if self._inflight.get(key) is task:
@@ -150,7 +160,7 @@ class HybridOrchestrator:
 
     # ---------------------------------------------------------------- internal
     async def _infer(self, messages, route, threshold, max_tokens, caller, key, t0, policy_notes,
-                     rid) -> InferenceResult:
+                     rid, on_event: Optional[EventSink] = None) -> InferenceResult:
         reasons: List[str] = list(policy_notes)
         primary: Optional[Generation] = None
         signals: Optional[Signals] = None
@@ -202,10 +212,25 @@ class HybridOrchestrator:
             return result
 
         # ---- escalate -------------------------------------------------------
+        streamed = [0]
         try:
-            cloud = await self.escalator.answer(messages, primary.text if primary else None, caller=caller)
+            draft = primary.text if primary else None
+            if on_event is None:
+                cloud = await self.escalator.answer(messages, draft, caller=caller)
+            else:
+                if self.escalator.can_escalate(caller):  # don't announce an escalation that can't happen
+                    await on_event({"type": "escalating", "request_id": rid,
+                                    "confidence": decision.score if decision else None, "reasons": list(reasons)})
+
+                async def forward(text: str) -> None:
+                    streamed[0] += len(text)
+                    await on_event({"type": "delta", "text": text})
+
+                cloud = await self.escalator.stream_answer(messages, draft, forward, caller=caller)
         except CloudUnavailable as exc:
             reasons.append(f"cloud unavailable: {exc}")
+            if streamed[0]:
+                reasons.append(f"cloud stream stopped after {streamed[0]} chars; the final answer replaces it")
             self.metrics.incr("cloud_errors_total")
             if primary is None:
                 raise ServiceUnavailable("; ".join(reasons)) from exc

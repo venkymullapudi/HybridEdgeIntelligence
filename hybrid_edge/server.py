@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
+import json
 import re
 import uuid
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .backends import build_backend
@@ -129,13 +131,11 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
             raise HTTPException(status_code=401, detail="invalid API key")
         return caller_id(supplied)
 
-    @app.post("/v1/infer", response_model=InferResponse)
-    async def infer(req: InferRequest, response: Response, caller: str = Depends(auth),
-                    x_request_id: Optional[str] = Header(None)) -> InferResponse:
+    def request_id(x_request_id: Optional[str]) -> str:
         # Keep a client's correlation ID if it's safe to echo and log; otherwise mint one.
-        rid = x_request_id if x_request_id and REQUEST_ID_RE.match(x_request_id) else uuid.uuid4().hex
-        response.headers["X-Request-ID"] = rid
-        hdrs = {"X-Request-ID": rid}
+        return x_request_id if x_request_id and REQUEST_ID_RE.match(x_request_id) else uuid.uuid4().hex
+
+    def parse(req: InferRequest, hdrs: Dict[str, str]) -> List[ChatMessage]:
         if req.messages:
             msgs = [ChatMessage(m.role, m.content) for m in req.messages]
         elif req.prompt is not None:
@@ -149,16 +149,70 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
             raise HTTPException(status_code=413, detail=f"too many messages (max {settings.max_messages})", headers=hdrs)
         if sum(len(m.content) for m in msgs) > settings.max_request_chars:
             raise HTTPException(status_code=413, detail=f"request too large (max {settings.max_request_chars} chars)", headers=hdrs)
+        return msgs
+
+    def to_response(res: Any, include_signals: bool) -> InferResponse:
+        out = InferResponse(**{k: v for k, v in res.__dict__.items() if k in InferResponse.model_fields})
+        if not include_signals:
+            out.signals = None
+        return out
+
+    @app.post("/v1/infer", response_model=InferResponse)
+    async def infer(req: InferRequest, response: Response, caller: str = Depends(auth),
+                    x_request_id: Optional[str] = Header(None)) -> InferResponse:
+        rid = request_id(x_request_id)
+        response.headers["X-Request-ID"] = rid
+        hdrs = {"X-Request-ID": rid}
+        msgs = parse(req, hdrs)
         try:
             res = await orch.infer(msgs, route=req.route, min_confidence=req.min_confidence,
                                    max_tokens=req.max_tokens, use_cache=req.use_cache, caller=caller,
                                    request_id=rid)
         except ServiceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc), headers=hdrs) from exc
-        out = InferResponse(**{k: v for k, v in res.__dict__.items() if k in InferResponse.model_fields})
-        if not req.include_signals:
-            out.signals = None
-        return out
+        return to_response(res, req.include_signals)
+
+    @app.post("/v1/infer/stream")
+    async def infer_stream(req: InferRequest, caller: str = Depends(auth),
+                           x_request_id: Optional[str] = Header(None)) -> StreamingResponse:
+        """Server-sent events. Edge-served and cached answers arrive as one `done`
+        event. An escalation first sends `escalating`, then `delta` events as Claude
+        writes, then `done`. The `done` event's answer is always authoritative. On
+        failure the stream ends with an `error` event."""
+        rid = request_id(x_request_id)
+        hdrs = {"X-Request-ID": rid}
+        msgs = parse(req, hdrs)  # validation errors are still plain HTTP errors
+        events: "asyncio.Queue[Optional[Dict[str, Any]]]" = asyncio.Queue()
+
+        async def run() -> None:
+            try:
+                res = await orch.infer(msgs, route=req.route, min_confidence=req.min_confidence,
+                                       max_tokens=req.max_tokens, use_cache=req.use_cache, caller=caller,
+                                       request_id=rid, on_event=events.put)
+                await events.put({"type": "done", **to_response(res, req.include_signals).model_dump()})
+            except ServiceUnavailable as exc:
+                await events.put({"type": "error", "status": 503, "detail": str(exc), "request_id": rid})
+            except Exception:  # noqa: BLE001 - report, don't hang the stream
+                log.exception("streamed inference failed")
+                await events.put({"type": "error", "status": 500, "detail": "internal error", "request_id": rid})
+            finally:
+                await events.put(None)
+
+        async def sse() -> AsyncIterator[str]:
+            task = asyncio.ensure_future(run())
+            try:
+                while True:
+                    ev = await events.get()
+                    if ev is None:
+                        return
+                    yield f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
+            finally:
+                # Client went away: stop the work (and Claude's billed stream) too.
+                if not task.done():
+                    task.cancel()
+
+        return StreamingResponse(sse(), media_type="text/event-stream",
+                                 headers={**hdrs, "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/healthz")
     async def healthz() -> Dict[str, str]:

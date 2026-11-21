@@ -405,6 +405,32 @@ response header (on errors too) and in the body, and uses it in escalation and
 shadow records. Requests answered from the cache or coalesced keep their own
 ID.
 
+## 37. How long does a user stare at nothing during an escalation?
+
+**For Claude's whole answer.** The slowest requests, escalations, often run
+10 s or more, and nothing was sent until the last token. Streaming was on the
+"not changed" list because the gate has to decide before any edge tokens are
+shown. But once a request has escalated, there's nothing left to retract.
+
+**Fix:** `POST /v1/infer/stream` (server-sent events). The gate still decides
+first:
+
+* An edge or cached answer arrives as a single `done` event.
+* An escalation sends `escalating` (with the gate's score and reasons), then
+  `delta` events as Claude writes, then `done`.
+* If both tiers are down, the stream ends with an `error` event.
+
+Escalations stream through `ClaudeEscalator.stream_answer`, which shares
+budgets, the breaker, the deadline, refusal fallbacks and the request shape
+with the non-streaming path. The orchestrator has one code path for both, with
+an optional event sink. `done` is always authoritative. If the stream breaks
+midway, the request falls back to the edge answer and says how much had
+streamed. A refusal fallback mid-stream can also change the final text.
+Validation errors are still plain HTTP 422/413 responses, sent before the
+stream opens. A client that disconnects cancels the work, which stops Claude's
+billed stream. `escalating` is sent only when Claude can actually take the
+request.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
@@ -413,6 +439,3 @@ ID.
 * **Global (cross-node) budget:** this needs shared state (DynamoDB or Redis).
   Per-node and per-key buckets cap the damage, and the escalation-rate alarm
   catches drift.
-* **Streaming responses to clients:** the gate has to decide before the user
-  sees any tokens, or the edge answer would have to be retracted mid-stream.
-  Streaming Claude's answer after an escalation is a reasonable next step.

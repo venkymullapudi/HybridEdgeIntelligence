@@ -15,7 +15,7 @@ import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import anthropic
 
@@ -229,8 +229,8 @@ class ClaudeEscalator:
         req.update(fallback_kwargs(self.s))
         return req
 
-    async def answer(self, messages: List[ChatMessage], edge_draft: Optional[str] = None,
-                     caller: str = "anon", shadow: bool = False) -> CloudAnswer:
+    def _admit(self, caller: str, shadow: bool) -> None:
+        """Breaker and budget checks; raises CloudUnavailable, consumes a token on success."""
         if not self.enabled:
             raise CloudUnavailable("cloud escalation disabled")
         if shadow:
@@ -239,25 +239,24 @@ class ClaudeEscalator:
                 raise CloudUnavailable("circuit breaker not closed")
             if not self.shadow_bucket.take():
                 raise CloudUnavailable("shadow budget exhausted")
-        else:
-            if not self.breaker.allow():
-                raise CloudUnavailable("circuit breaker open")
-            key_bucket = self.key_buckets.get(caller)
-            if not key_bucket.take():
-                self.breaker.release()
-                raise CloudUnavailable("per-key escalation budget exhausted")
-            if not self.bucket.take():
-                key_bucket.refund()
-                self.breaker.release()
-                raise CloudUnavailable("escalation budget exhausted")
+            return
+        if not self.breaker.allow():
+            raise CloudUnavailable("circuit breaker open")
+        key_bucket = self.key_buckets.get(caller)
+        if not key_bucket.take():
+            self.breaker.release()
+            raise CloudUnavailable("per-key escalation budget exhausted")
+        if not self.bucket.take():
+            key_bucket.refund()
+            self.breaker.release()
+            raise CloudUnavailable("escalation budget exhausted")
 
-        req = self._request(messages, None if shadow else edge_draft)
-        t0 = time.perf_counter()
+    async def _guard(self, awaitable: Awaitable[Any]) -> Any:
+        """Run one cloud call under the deadline, mapping failures for the breaker."""
         try:
             # One deadline over the SDK's own retries, kept below the ALB idle timeout so
             # the user gets a (degraded) answer instead of a 504 while we keep paying.
-            resp = await asyncio.wait_for(self.client.beta.messages.create(**req),
-                                          timeout=self.s.cloud_deadline_s)
+            resp = await asyncio.wait_for(awaitable, timeout=self.s.cloud_deadline_s)
         except asyncio.TimeoutError as exc:
             self.breaker.failure()
             raise CloudUnavailable(f"cloud deadline of {self.s.cloud_deadline_s}s exceeded") from exc
@@ -272,8 +271,10 @@ class ClaudeEscalator:
             self.breaker.release()  # e.g. cancelled: don't leave a probe stuck in flight
             raise
         self.breaker.success()
-        latency_ms = (time.perf_counter() - t0) * 1000
+        return resp
 
+    def _to_answer(self, resp: Any, t0: float) -> CloudAnswer:
+        latency_ms = (time.perf_counter() - t0) * 1000
         text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", None) == "text")
         fallback_used = any(getattr(b, "type", None) == "fallback" for b in resp.content)
         iterations = getattr(resp.usage, "iterations", None) or []
@@ -296,6 +297,35 @@ class ClaudeEscalator:
             refused=refused,
             fallback_used=fallback_used,
         )
+
+    async def answer(self, messages: List[ChatMessage], edge_draft: Optional[str] = None,
+                     caller: str = "anon", shadow: bool = False) -> CloudAnswer:
+        self._admit(caller, shadow)
+        req = self._request(messages, None if shadow else edge_draft)
+        t0 = time.perf_counter()
+        resp = await self._guard(self.client.beta.messages.create(**req))
+        return self._to_answer(resp, t0)
+
+    async def stream_answer(self, messages: List[ChatMessage], edge_draft: Optional[str],
+                            on_text: Callable[[str], Awaitable[None]], caller: str = "anon") -> CloudAnswer:
+        """Like answer(), but forwards text to ``on_text`` as Claude writes it.
+
+        The returned CloudAnswer (from the final message) is authoritative: with
+        server-side refusal fallbacks, text streamed before a mid-stream switch to the
+        fallback model can differ from the final answer."""
+        self._admit(caller, shadow=False)
+        req = self._request(messages, edge_draft)
+        t0 = time.perf_counter()
+
+        async def consume() -> Any:
+            async with self.client.beta.messages.stream(**req) as stream:
+                async for text in stream.text_stream:
+                    if text:
+                        await on_text(text)
+                return await stream.get_final_message()
+
+        resp = await self._guard(consume())
+        return self._to_answer(resp, t0)
 
     async def aclose(self) -> None:
         if self.client is not None and hasattr(self.client, "close"):
