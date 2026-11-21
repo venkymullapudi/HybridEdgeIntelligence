@@ -335,6 +335,30 @@ same class of silent breakage as question 24.
 **Fix:** bumped to `checkout@v7`, `setup-python@v7` and `setup-terraform@v4`
 (each released at least two weeks ago).
 
+## 32. Without API keys, who is "a caller"?
+
+**Whoever the client said it was.** When no keys were configured, the gateway
+still derived the caller identity from any `x-api-key` header, without checking
+it. A client sending a random key with each request got a fresh per-caller
+escalation budget every time, so the per-key limit (question 7) did nothing.
+Cache scoping and records were keyed on the same made-up label.
+
+**Fix:** unchecked keys are ignored. Without configured keys, callers are
+identified by client address: the **rightmost** `X-Forwarded-For` hop, which
+the ALB appends (Global Accelerator preserves the client IP). Entries to its
+left came from the client and can be forged. Set `trust_forwarded_for = false`
+when clients connect directly, without a load balancer.
+
+## 33. How do you choose the target precision?
+
+**Blind.** `hybrid-edge-calibrate` reported only the threshold for one
+`--target-precision`, with no view of what a slightly lower or higher target
+would cost.
+
+**Fix:** `--sweep` adds a table of edge coverage, precision and escalation
+rate at each threshold (traffic-weighted, like question 17). You can read off
+the knee of the cost/quality curve before committing to a target.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

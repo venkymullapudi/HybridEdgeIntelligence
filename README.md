@@ -78,7 +78,7 @@ Each response tells you what happened:
 | `GET /readyz` | readiness: returns 503 when the local model is down. ALB and Global Accelerator use it to drain an edge |
 | `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, per-source latency histograms (for p95/p99), cloud tokens and cost. Needs an API key when keys are configured |
 
-Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set.
+Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set. Without configured keys, budgets and cache scope are per client address: the rightmost `X-Forwarded-For` hop, as appended by the ALB. Set `HEI_TRUST_FORWARDED_FOR=false` when there's no load balancer in front.
 
 Conversation shape: at most one `system` message, which must come first, and the last message must be from the user (assistant prefill isn't supported). Anything else gets a 422. A large `max_tokens` shrinks the edge answer to fit the edge context window rather than forcing an escalation.
 
@@ -179,8 +179,10 @@ Choosing τ trades **escalation rate** (cost) against **edge precision** (qualit
 3. Fit the calibrator:
 
    ```bash
-   hybrid-edge-calibrate labelled.jsonl -o calibration.json --target-precision 0.95
+   hybrid-edge-calibrate labelled.jsonl -o calibration.json --target-precision 0.95 --sweep
    ```
+
+   `--sweep` adds coverage, precision and escalation rate at every threshold, so you can pick the target precision from the curve.
 
    ```
    {"rows": 5000, "threshold": 0.62, "edge_coverage": 0.78, "edge_precision": 0.951, "escalation_rate": 0.22}

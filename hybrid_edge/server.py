@@ -8,7 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -58,6 +58,18 @@ class InferResponse(BaseModel):
     signals: Optional[Dict[str, Any]] = None
 
 
+def client_ip(request: Request, trust_forwarded_for: bool) -> str:
+    """The client's address. Behind the ALB, the *rightmost* X-Forwarded-For entry is
+    the one the ALB appended (Global Accelerator preserves the client IP); entries
+    to its left came from the client and can be forged."""
+    if trust_forwarded_for:
+        xff = request.headers.get("x-forwarded-for", "")
+        hops = [h.strip() for h in xff.split(",") if h.strip()]
+        if hops:
+            return hops[-1]
+    return request.client.host if request.client else "unknown"
+
+
 def build_orchestrator(settings: Settings, backend=None, escalator=None, records=None) -> HybridOrchestrator:
     calibrator = Calibrator.load(settings.gate_calibration_path) if settings.gate_calibration_path else None
     if calibrator is not None and calibrator.edge_model != settings.edge_model:
@@ -102,10 +114,13 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
     app.state.orchestrator = orch
     app.state.settings = settings
 
-    def auth(authorization: Optional[str] = Header(None), x_api_key: Optional[str] = Header(None)) -> str:
+    def auth(request: Request, authorization: Optional[str] = Header(None),
+             x_api_key: Optional[str] = Header(None)) -> str:
         supplied = x_api_key or (authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None)
         if not settings.api_keys:
-            return caller_id(supplied)
+            # An unchecked key is just a client-chosen label: keying budgets on it would
+            # let a client mint a fresh bucket per request. Identify by address instead.
+            return caller_id("ip:" + client_ip(request, settings.trust_forwarded_for))
         if not supplied or not any(hmac.compare_digest(supplied, k) for k in settings.api_keys):
             raise HTTPException(status_code=401, detail="invalid API key")
         return caller_id(supplied)

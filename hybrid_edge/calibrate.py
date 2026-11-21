@@ -105,6 +105,22 @@ def choose_threshold(cal: Calibrator, rows: Sequence[Sequence],
     return best_thr, {"edge_coverage": best_cov, "edge_precision": best_prec, "escalation_rate": 1 - best_cov}
 
 
+def sweep(cal: Calibrator, rows: Sequence[Sequence], step: float = 0.05) -> List[Dict[str, float]]:
+    """Edge coverage and precision (traffic-weighted) if the gate used each threshold."""
+    data = [(cal.predict(x), y, wt) for x, y, wt in (_row(r) for r in rows)]
+    total = sum(wt for _, _, wt in data) or 1.0
+    out: List[Dict[str, float]] = []
+    steps = int(round(1 / step))
+    for i in range(steps + 1):
+        thr = round(i * step, 4)
+        served = [(y, wt) for p, y, wt in data if p >= thr]
+        w = sum(wt for _, wt in served)
+        good = sum(y * wt for y, wt in served)
+        out.append({"threshold": thr, "edge_coverage": round(w / total, 4),
+                    "edge_precision": round(good / w, 4) if w else None, "escalation_rate": round(1 - w / total, 4)})
+    return out
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("records")
@@ -112,6 +128,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--target-precision", type=float, default=0.95)
     ap.add_argument("--weak-labels", action="store_true")
     ap.add_argument("--weak-threshold", type=float, default=0.5)
+    ap.add_argument("--sweep", action="store_true",
+                    help="also print coverage/precision at each threshold, to choose --target-precision")
     ap.add_argument("--edge-model", default=None,
                     help="fit only on records from this edge model (required if records mix models)")
     args = ap.parse_args(argv)
@@ -133,7 +151,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     cal.dump(args.output)
     ll = -sum(y * math.log(max(cal.predict(x), 1e-9)) + (1 - y) * math.log(max(1 - cal.predict(x), 1e-9))
               for x, y, _ in rows) / len(rows)
-    print(json.dumps({"edge_model": edge_model, "rows": len(rows), "log_loss": round(ll, 4), "threshold": cal.threshold, **stats}, indent=2))
+    report = {"edge_model": edge_model, "rows": len(rows), "log_loss": round(ll, 4), "threshold": cal.threshold, **stats}
+    if args.sweep:
+        report["sweep"] = sweep(cal, rows)
+    print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":
