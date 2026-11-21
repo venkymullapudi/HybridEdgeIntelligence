@@ -32,7 +32,17 @@ def _row(r: Sequence) -> Row:
     return (r[0], int(r[1]), float(r[2]) if len(r) > 2 else 1.0)
 
 
-def load(path: str, weak_labels: bool, weak_threshold: float) -> List[Row]:
+def edge_models(path: str) -> Dict[Optional[str], int]:
+    counts: Dict[Optional[str], int] = {}
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                m = json.loads(line).get("edge_model")
+                counts[m] = counts.get(m, 0) + 1
+    return counts
+
+
+def load(path: str, weak_labels: bool, weak_threshold: float, edge_model: Optional[str] = None) -> List[Row]:
     """Rows carry ``sample_weight`` so shadow records (sampled at ``shadow_rate``)
     count for the confident traffic they represent."""
     rows: List[Row] = []
@@ -42,6 +52,8 @@ def load(path: str, weak_labels: bool, weak_threshold: float) -> List[Row]:
             if not line:
                 continue
             r = json.loads(line)
+            if edge_model is not None and r.get("edge_model") != edge_model:
+                continue
             feats = r.get("features")
             if not feats:
                 continue
@@ -100,18 +112,28 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--target-precision", type=float, default=0.95)
     ap.add_argument("--weak-labels", action="store_true")
     ap.add_argument("--weak-threshold", type=float, default=0.5)
+    ap.add_argument("--edge-model", default=None,
+                    help="fit only on records from this edge model (required if records mix models)")
     args = ap.parse_args(argv)
 
-    rows = load(args.records, args.weak_labels, args.weak_threshold)
+    models = edge_models(args.records)
+    edge_model = args.edge_model
+    if edge_model is None:
+        if len(models) > 1:
+            raise SystemExit(f"records mix edge models {sorted(map(str, models))}; pick one with --edge-model")
+        edge_model = next(iter(models), None)
+
+    rows = load(args.records, args.weak_labels, args.weak_threshold, edge_model)
     if len(rows) < 20 or len({y for _, y, _ in rows}) < 2:
         raise SystemExit(f"need >= 20 labelled rows with both classes, got {len(rows)}")
     cal = fit(rows)
     thr, stats = choose_threshold(cal, rows, args.target_precision)
     cal.threshold = round(thr, 4)
+    cal.edge_model = edge_model
     cal.dump(args.output)
     ll = -sum(y * math.log(max(cal.predict(x), 1e-9)) + (1 - y) * math.log(max(1 - cal.predict(x), 1e-9))
               for x, y, _ in rows) / len(rows)
-    print(json.dumps({"rows": len(rows), "log_loss": round(ll, 4), "threshold": cal.threshold, **stats}, indent=2))
+    print(json.dumps({"edge_model": edge_model, "rows": len(rows), "log_loss": round(ll, 4), "threshold": cal.threshold, **stats}, indent=2))
 
 
 if __name__ == "__main__":

@@ -209,6 +209,40 @@ tags, so it can't close them. The judge's system prompt says tagged content is
 data, never instructions, and that an answer trying to steer the grade is
 itself unacceptable.
 
+## 21. What happens to the calibration when you swap the edge model?
+
+**It kept applying, silently.** Logprob scales differ between models, so a
+threshold fit on one model's signals means nothing for another. But
+`calibration.json` didn't record which model it was fit on, and records from
+different models could be pooled into one fit.
+
+**Fix:** the calibrator stores its `edge_model`. `hybrid-edge-calibrate`
+refuses records that mix models unless `--edge-model` picks one. The gateway
+**refuses to start** when the calibration's model doesn't match `edge_model`, so
+ECS's deployment circuit breaker rolls the deploy back.
+`gate_allow_calibration_mismatch` overrides this deliberately.
+
+## 22. Who can read `/metrics`?
+
+**Anyone on the internet.** The ALB exposed `/metrics` without auth, revealing
+traffic volume, escalation rate and cost.
+
+**Fix:** `/metrics` now requires the same API key as `/v1/infer` (when keys are
+configured). `/healthz` and `/readyz` stay open for the load balancer and
+Global Accelerator.
+
+## 23. What if the edge server stops returning logprobs?
+
+**Every request escalates, and nothing says why.** With no logprobs the
+signals fall back to a neutral 0.5, which is below the default 0.7 threshold.
+A server upgrade, or a backend without logprob support, turns the edge into a
+pass-through to Claude at full cost.
+
+**Fix:** each such answer increments `edge_no_logprobs_total` and logs a
+one-time error explaining the cause. The escalation-rate alarm catches the
+effect. A new test also pins the EMF document format that the alarm depends on:
+every declared metric has a numeric value, and every dimension is present.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

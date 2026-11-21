@@ -60,6 +60,14 @@ class InferResponse(BaseModel):
 
 def build_orchestrator(settings: Settings, backend=None, escalator=None, records=None) -> HybridOrchestrator:
     calibrator = Calibrator.load(settings.gate_calibration_path) if settings.gate_calibration_path else None
+    if calibrator is not None and calibrator.edge_model != settings.edge_model:
+        msg = (f"calibration {settings.gate_calibration_path} was fit on edge model "
+               f"{calibrator.edge_model!r}, but the edge model is {settings.edge_model!r}")
+        if not settings.gate_allow_calibration_mismatch:
+            # Fail fast: ECS's deployment circuit breaker rolls back instead of serving
+            # with a threshold that means nothing for this model.
+            raise ValueError(msg + "; recalibrate or set HEI_GATE_ALLOW_CALIBRATION_MISMATCH=true")
+        log.warning("%s (allowed by gate_allow_calibration_mismatch)", msg)
     gate = ConfidenceGate(
         threshold=settings.gate_threshold,
         weights=settings.gate_weights,
@@ -139,7 +147,8 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
         return {"status": "ready", "edge_model": settings.edge_model,
                 "cloud_breaker": orch.escalator.breaker.state}
 
-    @app.get("/metrics", response_class=PlainTextResponse)
+    # Counters reveal traffic, escalation rate and spend: same auth as inference.
+    @app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(auth)])
     async def metrics() -> str:
         return orch.metrics.prometheus()
 

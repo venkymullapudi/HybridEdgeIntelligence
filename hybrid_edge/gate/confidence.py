@@ -18,6 +18,9 @@ class Calibrator:
     weights: Dict[str, float]
     bias: float
     threshold: Optional[float] = None
+    # The edge model whose signals this was fit on. Logprob scales differ between
+    # models, so a calibration must never silently outlive a model swap.
+    edge_model: Optional[str] = None
 
     def predict(self, features: Dict[str, float]) -> float:
         z = self.bias + sum(w * features.get(k, 0.0) for k, w in self.weights.items())
@@ -27,11 +30,13 @@ class Calibrator:
     def load(cls, path: str) -> "Calibrator":
         with open(path, "r", encoding="utf-8") as fh:
             raw = json.load(fh)
-        return cls(weights=raw["weights"], bias=float(raw["bias"]), threshold=raw.get("threshold"))
+        return cls(weights=raw["weights"], bias=float(raw["bias"]), threshold=raw.get("threshold"),
+                   edge_model=raw.get("edge_model"))
 
     def dump(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump({"weights": self.weights, "bias": self.bias, "threshold": self.threshold}, fh, indent=2)
+            json.dump({"weights": self.weights, "bias": self.bias, "threshold": self.threshold,
+                       "edge_model": self.edge_model}, fh, indent=2)
 
 
 @dataclass

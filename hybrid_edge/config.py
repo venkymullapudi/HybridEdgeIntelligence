@@ -62,6 +62,8 @@ class Settings:
     gate_weights: GateWeights = field(default_factory=GateWeights)
     # Optional JSON produced by `hybrid-edge-calibrate`; replaces the heuristic.
     gate_calibration_path: Optional[str] = None
+    # Refuse to start when the calibration was fit on a different edge model.
+    gate_allow_calibration_mismatch: bool = False
     gate_hedge_penalty: float = 0.25
     gate_truncation_penalty: float = 0.15
 

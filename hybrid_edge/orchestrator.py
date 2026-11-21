@@ -77,6 +77,7 @@ class HybridOrchestrator:
         self.cache: TTLCache[InferenceResult] = TTLCache(settings.cache_size, settings.cache_ttl_s)
         self._inflight: Dict[str, "asyncio.Future[InferenceResult]"] = {}
         self._background: Set["asyncio.Task[Any]"] = set()
+        self._warned_no_logprobs = False
 
     # ------------------------------------------------------------------ public
     async def infer(
@@ -241,6 +242,14 @@ class HybridOrchestrator:
             self.metrics.incr("edge_aborted_total")
 
         signals = compute_signals(primary, [], self.s.gate_min_window)
+        if not signals.has_logprobs and primary.completion_tokens > 0:
+            # Without logprobs every answer scores a neutral 0.5 and escalates: a silent
+            # cost explosion. Count it so the alarm (and /metrics) can catch it.
+            self.metrics.incr("edge_no_logprobs_total")
+            if not self._warned_no_logprobs:
+                self._warned_no_logprobs = True
+                log.error("edge model returned no logprobs; the gate cannot score answers and "
+                          "will escalate them. Check the server supports logprobs/top_logprobs.")
         decision = self.gate.decide(signals, threshold)
 
         # Gray-zone self-consistency: extra samples only when they could flip the decision.

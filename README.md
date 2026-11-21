@@ -76,7 +76,7 @@ Each response tells you what happened:
 | `POST /v1/infer` | `{"prompt": "…"}` or `{"messages": [{role, content}…]}`. Optional fields: `route` (`auto`, `edge` or `cloud`), `min_confidence` (overrides τ for this request), `max_tokens`, `use_cache`, `include_signals` |
 | `GET /healthz` | liveness check for the gateway process |
 | `GET /readyz` | readiness: returns 503 when the local model is down. ALB and Global Accelerator use it to drain an edge |
-| `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, latency and cloud tokens |
+| `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, latency, cloud tokens and cost. Needs an API key when keys are configured |
 
 Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set.
 
@@ -183,7 +183,7 @@ Choosing τ trades **escalation rate** (cost) against **edge precision** (qualit
    ```
    {"rows": 5000, "threshold": 0.62, "edge_coverage": 0.78, "edge_precision": 0.951, "escalation_rate": 0.22}
    ```
-4. Ship `calibration.json` with the gateway and set `HEI_GATE_CALIBRATION_PATH`. Its threshold replaces `gate_threshold`.
+4. Ship `calibration.json` with the gateway and set `HEI_GATE_CALIBRATION_PATH`. Its threshold replaces `gate_threshold`. The file records the edge model it was fit on, and the gateway refuses to start with a different `edge_model`, so recalibrate after every model change. If your records mix models, pass `--edge-model` to `hybrid-edge-calibrate`.
 
 The same records double as a distillation set: fine-tune the edge model on `(messages, cloud_answer)` pairs, redeploy it, and recalibrate.
 
