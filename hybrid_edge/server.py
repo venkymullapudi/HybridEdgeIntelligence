@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .backends import build_backend
@@ -122,6 +123,16 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
     app.state.orchestrator = orch
     app.state.settings = settings
     app.add_middleware(BodySizeLimit, max_bytes=settings.effective_max_body_bytes)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # FastAPI's default handler echoes the invalid input back. Input with NaN or
+        # Infinity (which the JSON parser accepts) then can't be serialized, so a plain
+        # bad request became a 500; echoing also reflects arbitrary client content.
+        # Say where and what, never the input itself.
+        detail = [{"loc": list(e.get("loc", ())), "msg": str(e.get("msg", "")), "type": str(e.get("type", ""))}
+                  for e in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": detail})
 
     def auth(request: Request, authorization: Optional[str] = Header(None),
              x_api_key: Optional[str] = Header(None)) -> str:

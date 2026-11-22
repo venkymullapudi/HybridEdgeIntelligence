@@ -879,6 +879,30 @@ one turns up, the answer is validating it too, not exempting 400s from the
 breaker again. That exemption is exactly what let an exhausted credit balance
 retry forever.
 
+## 62. Can any client input crash the gateway?
+
+**Yes, easily.** Question 61 found one crash by hand, so this time I fuzzed both
+endpoints, offline, with seeded random bodies: wrong types, nested junk,
+control characters, lone surrogates, `NaN` and `Infinity`, truncated JSON.
+**165 of 600 requests returned a 500.**
+
+**Root cause:** FastAPI's default validation-error handler echoes the invalid
+input back in the 422 response. Python's JSON parser accepts `NaN` and
+`Infinity`, but the response encoder refuses to emit them. So any *invalid*
+request containing one crashed the error handler itself and became a 500.
+Echoing input is also wrong on its own: it reflects arbitrary, possibly huge or
+sensitive client content back out.
+
+**Fix:**
+
+* A custom validation handler returns only each error's `loc`, `msg` and
+  `type`, never the input.
+* After the fix, 3,500 fuzzed requests across seven seeds, on both Python
+  3.9 and 3.12 (different FastAPI and pydantic versions), gave zero 500s.
+* The fuzzer is now a test (`tests/test_fuzz.py`): 1,200 requests across both
+  endpoints on every CI run, failing on any 5xx or streamed 500. It fails on
+  the previous code.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
