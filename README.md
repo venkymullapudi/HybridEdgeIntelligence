@@ -168,7 +168,7 @@ Notes:
 * **Shadow traffic:** `shadow_rate` (default 0.01) costs roughly that fraction of edge-served traffic in extra Claude calls, capped by `shadow_max_per_min`. Set it to 0 to turn shadowing off. It's ignored, with a startup warning, unless records are kept with their text, since otherwise nothing could be calibrated from them.
 * **Debugging:** ECS Exec into edge containers is off by default, since they hold the Anthropic key. Set `enable_execute_command = true` to allow it. Tasks can't reach instance metadata, so they never get the GPU node's credentials.
 * **Alarms:** each edge alarms on escalation rate and degraded rate, and sends notifications to a regional SNS topic. Set `alarm_emails` to subscribe people, who must confirm AWS's subscription email.
-* **Cost:** each edge runs at least one g6.xlarge GPU node plus a NAT gateway. Set `min_nodes = 0` on regions you only want as burst capacity.
+* **Cost:** every edge region runs at least one GPU node (g6.xlarge by default) plus a NAT gateway, around the clock. ECS always keeps at least `desired_tasks` (≥ 1) running, and an edge with no task gets no traffic, so it could never scale up again. Lowering `min_nodes` doesn't change that floor. To stop paying for a region, remove it from `edge_regions`: Global Accelerator sends its users to the nearest remaining edge.
 * **Model choice:** Qwen2.5-7B-Instruct (Apache-2.0) fits on a single L4. For gated models such as Llama, set `enable_hf_token = true` and store your Hugging Face token.
 * The ECR replication configuration is account-wide. Set `manage_ecr_replication = false` if you already manage it somewhere else.
 

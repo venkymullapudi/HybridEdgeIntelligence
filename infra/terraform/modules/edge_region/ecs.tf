@@ -111,7 +111,17 @@ resource "aws_autoscaling_group" "gpu" {
     propagate_at_launch = true
   }
 
-  lifecycle { ignore_changes = [desired_capacity] }
+  lifecycle {
+    ignore_changes = [desired_capacity]
+    precondition {
+      condition     = var.desired_tasks >= 1 && var.desired_tasks <= var.max_nodes
+      error_message = "desired_tasks must be between 1 and max_nodes: every task needs its own GPU node, and an edge with no task never receives traffic to scale up from."
+    }
+    precondition {
+      condition     = var.min_nodes >= 0 && var.min_nodes <= var.max_nodes
+      error_message = "min_nodes must be between 0 and max_nodes."
+    }
+  }
 }
 
 resource "aws_ecs_capacity_provider" "gpu" {

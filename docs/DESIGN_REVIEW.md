@@ -795,6 +795,35 @@ Also: Global Accelerator now health-checks every 10 s, not the default 30 s.
 With three failures needed, a dead edge is drained in about 30 s instead of
 about 90 s.
 
+## 59. Can a region scale to zero when it's not needed?
+
+**No, and the README said it could.** It suggested `min_nodes = 0` for
+"burst-only" regions, but that does nothing:
+
+* The service's autoscaling floor is `desired_tasks` (at least 1). ECS keeps
+  that task running, and the capacity provider launches a GPU node for it
+  regardless of `min_nodes`.
+* Even at zero tasks, the region would never come back. With no healthy
+  targets it receives no traffic, so the request-count scaling metric can't
+  rise.
+
+The real cost floor is one GPU node plus one NAT gateway per region, around
+the clock.
+
+**Fix:**
+
+* The README now states that floor, and says the only way to stop paying for
+  a region is to remove it from `edge_regions`. Global Accelerator then routes
+  its users to the nearest remaining edge.
+* The scaling settings are now checked when Terraform plans:
+  `1 ≤ desired_tasks ≤ max_nodes` and `0 ≤ min_nodes ≤ max_nodes`.
+  Inconsistent values used to fail deep inside an apply, or not fail at all.
+* A test fails if the README ever promises `min_nodes = 0` again.
+
+True scale-to-zero would need something to wake a region before traffic
+arrives (scheduled scaling, or a Global Accelerator traffic dial driven by
+demand elsewhere). That's added to "not changed".
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
@@ -803,3 +832,7 @@ about 90 s.
 * **Global (cross-node) budget:** this needs shared state (DynamoDB or Redis).
   Per-node and per-key buckets cap the damage, and the escalation-rate alarm
   catches drift.
+* **Scale-to-zero regions:** a region with no task gets no traffic, so it can
+  never scale itself back up. It would need an external trigger (scheduled
+  scaling, or demand-driven Global Accelerator traffic dials). Until then,
+  each region's floor is one GPU node.

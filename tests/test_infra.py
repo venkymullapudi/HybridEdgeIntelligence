@@ -85,3 +85,14 @@ def test_rolling_deploy_has_a_spare_gpu_at_full_scale():
 def test_global_accelerator_fails_over_quickly():
     edges = (TF / "edges.tf").read_text()
     assert re.search(r"health_check_interval_seconds\s*=\s*10\b", edges)
+
+
+def test_scaling_settings_are_checked_at_plan_time():
+    asg = next(body for f, n, body in blocks("aws_autoscaling_group") if n == "gpu")
+    assert "var.desired_tasks >= 1 && var.desired_tasks <= var.max_nodes" in asg
+    assert "var.min_nodes >= 0 && var.min_nodes <= var.max_nodes" in asg
+
+
+def test_readme_does_not_promise_scale_to_zero():
+    readme = (TF.parents[1] / "README.md").read_text()
+    assert "min_nodes = 0" not in readme
