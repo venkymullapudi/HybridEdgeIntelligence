@@ -161,5 +161,5 @@ async def test_edge_draft_included_when_enabled(settings):
     esc = ClaudeEscalator(settings, client=fake)
     await esc.answer([ChatMessage("system", "sys"), ChatMessage("user", "q")], edge_draft="draft!")
     call = fake.calls[0]
-    assert call["system"] == "sys"
+    assert call["system"][0]["text"] == "sys"
     assert "draft!" in call["messages"][-1]["content"]

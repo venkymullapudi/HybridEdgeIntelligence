@@ -48,6 +48,8 @@ class CloudAnswer:
     output_tokens: int
     latency_ms: float
     cost_usd: float = 0.0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     refused: bool = False
     fallback_used: bool = False
 
@@ -182,8 +184,13 @@ def fallback_kwargs(settings: Settings) -> Dict[str, Any]:
     return {}
 
 
-def estimate_cost(settings: Settings, input_tokens: int, output_tokens: int) -> float:
-    return (input_tokens * settings.cloud_price_in_per_mtok + output_tokens * settings.cloud_price_out_per_mtok) / 1e6
+def estimate_cost(settings: Settings, input_tokens: int, output_tokens: int,
+                  cache_read_tokens: int = 0, cache_write_tokens: int = 0) -> float:
+    """USD for one call. ``input_tokens`` excludes cached tokens, which bill separately."""
+    return (input_tokens * settings.cloud_price_in_per_mtok
+            + output_tokens * settings.cloud_price_out_per_mtok
+            + cache_read_tokens * settings.cloud_price_cache_read_per_mtok
+            + cache_write_tokens * settings.cloud_price_cache_write_per_mtok) / 1e6
 
 
 class ClaudeEscalator:
@@ -234,6 +241,15 @@ class ClaudeEscalator:
             "messages": convo,
             "output_config": {"effort": self.s.cloud_effort},
         }
+        if self.s.cloud_prompt_caching:
+            # The system prompt is the prefix shared across a tenant's escalations: mark
+            # its end. (Below the model's minimum cacheable size it silently isn't cached.)
+            req["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+            if sum(1 for m in convo if m["role"] == "user") > 1:
+                # Multi-turn: the next turn re-sends this history, so let the automatic
+                # breakpoint follow the conversation. Single-turn requests end in a unique
+                # question; caching that tail would be a write premium never read back.
+                req["cache_control"] = {"type": "ephemeral"}
         req.update(fallback_kwargs(self.s))
         return req
 
@@ -294,6 +310,8 @@ class ClaudeEscalator:
             raise CloudUnavailable(f"cloud returned no answer text (stop_reason={resp.stop_reason})", "empty")
         in_tok = int(getattr(resp.usage, "input_tokens", 0) or 0)
         out_tok = int(getattr(resp.usage, "output_tokens", 0) or 0)
+        cache_read = int(getattr(resp.usage, "cache_read_input_tokens", 0) or 0)
+        cache_write = int(getattr(resp.usage, "cache_creation_input_tokens", 0) or 0)
         return CloudAnswer(
             text=text,
             model=getattr(resp, "model", self.model),
@@ -301,7 +319,9 @@ class ClaudeEscalator:
             input_tokens=in_tok,
             output_tokens=out_tok,
             latency_ms=latency_ms,
-            cost_usd=estimate_cost(self.s, in_tok, out_tok),
+            cost_usd=estimate_cost(self.s, in_tok, out_tok, cache_read, cache_write),
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
             refused=refused,
             fallback_used=fallback_used,
         )

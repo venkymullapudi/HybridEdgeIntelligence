@@ -276,6 +276,8 @@ class HybridOrchestrator:
             reasons.append(f"served by fallback model {cloud.model}")
         usage: Dict[str, float] = {"cloud_input_tokens": cloud.input_tokens,
                                    "cloud_output_tokens": cloud.output_tokens,
+                                   "cloud_cache_read_tokens": cloud.cache_read_tokens,
+                                   "cloud_cache_write_tokens": cloud.cache_write_tokens,
                                    "cloud_cost_usd": round(cloud.cost_usd, 6)}
         if primary is not None:
             usage.update(self._edge_usage(primary))
@@ -415,7 +417,8 @@ class HybridOrchestrator:
                cloud: Optional[CloudAnswer], key: str, caller: str, cacheable: bool) -> None:
         self.metrics.observe(
             result.source, result.escalated, result.degraded, result.confidence, result.latency_ms,
-            cloud_tokens=(cloud.input_tokens + cloud.output_tokens) if cloud else 0,
+            cloud_tokens=(cloud.input_tokens + cloud.output_tokens + cloud.cache_read_tokens
+                          + cloud.cache_write_tokens) if cloud else 0,
             cloud_cost=cloud.cost_usd if cloud else 0.0,
             avoided_cost=float(result.usage.get("avoided_cost_usd", 0.0)),
         )

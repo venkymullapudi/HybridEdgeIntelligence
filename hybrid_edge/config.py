@@ -94,6 +94,11 @@ class Settings:
     # USD per million tokens, for cost / avoided-cost metrics (defaults: claude-opus-5-5).
     cloud_price_in_per_mtok: float = 4.0
     cloud_price_out_per_mtok: float = 20.0
+    cloud_price_cache_read_per_mtok: float = 0.20    # 0.05x input on claude-opus-5-5
+    cloud_price_cache_write_per_mtok: float = 5.0    # 1.25x input (5-minute TTL)
+    # Cache the system prompt (shared across a tenant's escalations) and, for multi-turn
+    # conversations, the history the next turn will re-send.
+    cloud_prompt_caching: bool = True
 
     # Shadow escalation: fraction of edge-served requests also sent to Claude in the
     # background, so calibration sees reference answers for *confident* edge answers too.

@@ -36,7 +36,7 @@ async def test_merge_mode_reaches_edge_but_claude_keeps_system(settings):
                            records=MemorySink(settings))
     await o.infer([ChatMessage("system", "Answer in French."), ChatMessage("user", "hard question")])
     assert backend.roles == ["user"]                     # no system role sent to the edge
-    assert fake.calls[0]["system"] == "Answer in French."  # Claude still gets a real system prompt
+    assert fake.calls[0]["system"][0]["text"] == "Answer in French."  # Claude still gets a real system prompt
 
 
 # --- Q36: request IDs ---------------------------------------------------------

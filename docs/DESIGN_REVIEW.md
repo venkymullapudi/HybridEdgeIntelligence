@@ -557,6 +557,30 @@ character counts as about one token. This slightly over-estimates
 accented-Latin text, which is the safe direction. Counting uses
 `str.encode("ascii", "ignore")`, which runs in C.
 
+## 46. Do escalations pay full price for prefixes Claude has already seen?
+
+**Yes.** No escalation used prompt caching. A tenant's long system prompt was
+sent uncached on every escalation, and each turn of a multi-turn conversation
+re-sent the whole history at the full input price. For `claude-opus-5-5`, a
+cache read costs $0.20/MTok against $4/MTok uncached, about 20× less.
+
+**Fix (`cloud_prompt_caching`, on by default):**
+
+* **System prompt:** marked with an explicit breakpoint, since it's the prefix
+  shared across a tenant's escalations. Below the model's minimum cacheable
+  size it silently isn't cached, at no cost.
+* **Multi-turn conversations:** also get the top-level automatic breakpoint,
+  because the next turn re-sends this history.
+* **Single-turn requests:** deliberately skip the automatic breakpoint. They
+  end in a unique question, so caching the tail would pay the 1.25× write
+  premium on bytes that are never read back.
+* **Cost accounting:** `cache_read_input_tokens` and
+  `cache_creation_input_tokens` are priced separately
+  (`cloud_price_cache_read_per_mtok`, `cloud_price_cache_write_per_mtok`),
+  since `input_tokens` excludes them, so v0.2's estimates would have been
+  wrong once caching was on. Responses report `cloud_cache_read_tokens` and
+  `cloud_cache_write_tokens`.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
