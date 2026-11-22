@@ -777,6 +777,24 @@ edges ran the uncalibrated heuristic indefinitely.
   where `aws:SecureTransport` is `false`.
 * Static tests guard all three.
 
+## 58. Can you deploy at peak load?
+
+**No.** Every task needs a whole GPU (one per g6.xlarge). ECS rolling deploys
+keep 100% of tasks healthy: they start each new task *before* stopping an old
+one, so a deploy needs one spare GPU node. But the ASG's `max_size` equalled
+`max_nodes`, which is also the service's autoscaling ceiling. At full scale,
+exactly when a fix tends to be urgent, the new task couldn't be placed, the
+deployment stalled, and the circuit breaker rolled it back.
+
+**Fix:** the ASG allows `max_nodes + 1`. Tasks stay capped at `max_nodes`, so
+the extra node exists only to make room during a deploy. Capacity-provider
+managed scaling launches it when a task is waiting to be placed, and scales it
+back in afterwards. It costs nothing at rest.
+
+Also: Global Accelerator now health-checks every 10 s, not the default 30 s.
+With three failures needed, a dead edge is drained in about 30 s instead of
+about 90 s.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

@@ -91,9 +91,12 @@ resource "aws_launch_template" "gpu" {
 }
 
 resource "aws_autoscaling_group" "gpu" {
-  name_prefix           = "${local.prefix}-gpu-"
-  min_size              = var.min_nodes
-  max_size              = var.max_nodes
+  name_prefix = "${local.prefix}-gpu-"
+  min_size    = var.min_nodes
+  # +1 surge node: a rolling deploy starts the new task before stopping an old one,
+  # and each task needs a whole GPU. Without headroom, a deploy at full scale can't
+  # place the new task, stalls, and is rolled back.
+  max_size              = var.max_nodes + 1
   vpc_zone_identifier   = aws_subnet.private[*].id
   protect_from_scale_in = true
 

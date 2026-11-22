@@ -71,3 +71,17 @@ def test_every_records_bucket_requires_tls():
     for f, _, _ in [b for b in buckets if b[1] == "records"]:
         tls = [body for pf, n, body in policies if pf == f and n == "records_tls_only"]
         assert tls and '"aws:SecureTransport" = "false"' in tls[0], f"{f}: records bucket allows plain HTTP"
+
+
+def test_rolling_deploy_has_a_spare_gpu_at_full_scale():
+    """Service tasks may reach max_nodes; the ASG must allow one more node so a
+    rolling deploy (new task before old stops, one GPU each) can always place."""
+    ecs = (TF / "modules/edge_region/ecs.tf").read_text()
+    assert re.search(r"max_size\s*=\s*var\.max_nodes \+ 1", ecs)
+    assert re.search(r"max_capacity\s*=\s*var\.max_nodes\b", ecs)
+    assert "minimum_healthy_percent" not in ecs or "deployment_minimum_healthy_percent = 100" in ecs
+
+
+def test_global_accelerator_fails_over_quickly():
+    edges = (TF / "edges.tf").read_text()
+    assert re.search(r"health_check_interval_seconds\s*=\s*10\b", edges)

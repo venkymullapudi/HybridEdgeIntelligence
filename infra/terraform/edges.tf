@@ -219,6 +219,8 @@ resource "aws_globalaccelerator_endpoint_group" "edge" {
   health_check_port       = local.use_tls ? 443 : 80
   health_check_path       = "/readyz"
   threshold_count         = 3
+  # 10 s x 3 = ~30 s to fail over from a dead edge (the default 30 s interval took ~90 s).
+  health_check_interval_seconds = 10
 
   endpoint_configuration {
     endpoint_id                    = local.edges[each.key].alb_arn
