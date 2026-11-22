@@ -66,6 +66,25 @@ jobs:
           sleep 3
           docker exec gw sh -c 'test -s data/escalations.jsonl && head -c 300 data/escalations.jsonl'
           docker exec gw python -c "import json; r=json.loads(open('data/escalations.jsonl').readline()); assert r['escalated'], r"
+      # The ECS deployment runs the gateway read-only with every capability dropped:
+      # prove the image works that way.
+      - name: Smoke-test the image locked down
+        run: |
+          docker run -d --name gw-locked -p 8081:8080 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --user 10001 \
+            -e HEI_EDGE_BACKEND=mock -e HEI_CLOUD_PROVIDER=none -e HEI_EMIT_EMF=false -e HEI_RECORD_SINK=stdout \
+            hybrid-edge-gateway:ci
+          for i in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' gw-locked)
+            [ "$status" = healthy ] && break
+            sleep 1
+          done
+          test "$status" = healthy
+          curl -sf localhost:8081/v1/infer -H 'content-type: application/json' \
+            -d '{"prompt":"prove this hard theorem"}' | grep -q '"escalated":true'
+          ! docker exec gw-locked sh -c 'touch /app/probe' 2>/dev/null
       - name: Container logs
         if: failure()
-        run: docker logs gw || true
+        run: |
+          docker logs gw || true
+          docker logs gw-locked || true

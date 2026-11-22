@@ -297,6 +297,15 @@ resource "aws_ecs_task_definition" "edge" {
       memoryReservation = 1024
       portMappings      = [{ containerPort = 8080, protocol = "tcp" }]
       dependsOn         = [{ containerName = "vllm", condition = "HEALTHY" }]
+      # Least privilege for the container that holds the Anthropic key: it writes nothing
+      # to disk on ECS (records go to Firehose), so the root FS is read-only and every
+      # Linux capability is dropped. ECS Exec's agent needs a writable FS, hence the toggle.
+      user                   = "10001"
+      readonlyRootFilesystem = !var.enable_execute_command
+      linuxParameters = {
+        capabilities       = { drop = ["ALL"] }
+        initProcessEnabled = true
+      }
       environment = [
         { name = "HEI_REGION", value = local.region },
         { name = "HEI_EDGE_ID", value = local.prefix },

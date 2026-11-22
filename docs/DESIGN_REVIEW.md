@@ -1092,6 +1092,30 @@ before switching to it. The CI image smoke test (question 50) now runs with
 and checks that an escalation record was actually written inside the
 container. A static test guards the Dockerfile line.
 
+## 71. How much can a compromised gateway container do?
+
+**More than it needs.** The gateway holds the Anthropic API key but ran with
+Docker's defaults: a **writable root filesystem** and the **default Linux
+capability set**. A compromised dependency or parser bug could rewrite the
+gateway's own code on disk, or use capabilities it never needs. On ECS the
+gateway writes nothing to disk: records go to Firehose, and bytecode writing
+is off.
+
+**Fix (gateway container on ECS):**
+
+* `readonlyRootFilesystem = true`;
+* every Linux capability dropped;
+* an explicit `user = "10001"`, with an init process.
+
+The one exception is ECS Exec (question 57), whose agent needs a writable
+filesystem: the root filesystem is writable only when `enable_execute_command`
+is on. The vLLM container is unchanged, since it writes model caches.
+
+**Proof:** CI runs a second smoke container with
+`--read-only --cap-drop ALL --security-opt no-new-privileges --user 10001`.
+It must become healthy, answer an escalating request, and refuse a write to
+`/app`. A static test guards the task definition.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

@@ -106,3 +106,14 @@ def test_image_data_dir_is_writable_by_the_runtime_user():
     assert dockerfile.index("chown app:app /app/data") < dockerfile.index("USER app")
     from hybrid_edge.config import Settings
     assert Settings().record_path == "data/escalations.jsonl"  # the default the image must support
+
+
+def test_gateway_runs_with_least_privilege():
+    ecs = (TF / "modules/edge_region/ecs.tf").read_text()
+    gw = ecs[ecs.index('name              = "gateway"'):]
+    gw = gw[:gw.index("logConfiguration")]
+    assert 'user                   = "10001"' in gw
+    assert "readonlyRootFilesystem = !var.enable_execute_command" in gw  # read-only unless Exec is on
+    assert 'capabilities       = { drop = ["ALL"] }' in gw
+    ci = (TF.parents[1] / ".github/workflows/ci.yml").read_text()
+    assert "--read-only --cap-drop ALL" in ci  # and CI proves the image runs that way
