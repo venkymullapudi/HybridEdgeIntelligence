@@ -87,7 +87,7 @@ Edge models without a system role (e.g. Gemma): set `HEI_EDGE_SYSTEM_ROLE=merge`
 
 Conversation shape: at most one `system` message, which must come first, the last message must be from the user (assistant prefill isn't supported), and user and assistant messages can't be empty. Anything else gets a 422. A large `max_tokens` shrinks the edge answer to fit the edge context window rather than forcing an escalation.
 
-Request limits: requests over `max_request_chars` (default 100k) or `max_messages` (default 200) are rejected with 413.
+Request limits: requests over `max_request_chars` (default 100k) or `max_messages` (default 200) are rejected with 413. The raw body is also capped before it's read (`max_body_bytes`, by default derived from `max_request_chars`), so an oversized or endless upload can't fill gateway memory.
 
 Client policy: set `HEI_ALLOW_CLIENT_OVERRIDES=false` to ignore `route` and `min_confidence` from callers. Even when overrides are allowed, `min_confidence` is capped at `max_client_min_confidence` (default 0.95), so a client can't force every request to Claude.
 

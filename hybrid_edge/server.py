@@ -21,6 +21,7 @@ from .backends.base import ChatMessage, conversation_problem
 from .cloud.claude import ClaudeEscalator
 from .config import Settings
 from .gate.confidence import Calibrator, ConfidenceGate
+from .limits import BodySizeLimit
 from .orchestrator import HybridOrchestrator, ServiceUnavailable, caller_id
 from .telemetry import Metrics, RecordSink
 
@@ -120,6 +121,7 @@ def create_app(settings: Optional[Settings] = None, orchestrator: Optional[Hybri
     app = FastAPI(title="Hybrid Edge Intelligence", version="0.2.0", lifespan=lifespan)
     app.state.orchestrator = orch
     app.state.settings = settings
+    app.add_middleware(BodySizeLimit, max_bytes=settings.effective_max_body_bytes)
 
     def auth(request: Request, authorization: Optional[str] = Header(None),
              x_api_key: Optional[str] = Header(None)) -> str:

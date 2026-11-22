@@ -664,6 +664,29 @@ edge call into a 400, and so every request into an escalation.
 fails the deploy (and ECS's circuit breaker rolls it back) instead of
 quietly burning budget.
 
+## 53. Can a client fill gateway memory with one request?
+
+**Yes.** `max_request_chars` (question 13) is checked on the *parsed*
+messages, but by then FastAPI has already buffered and JSON-decoded the whole
+body. Neither uvicorn nor the ALB caps body size, so one multi-gigabyte POST,
+or an endless chunked upload, was read into memory before any limit applied.
+
+**Fix:** `BodySizeLimit`, a raw ASGI middleware that applies before any parsing:
+
+* A `Content-Length` over the cap gets a 413 at once. A malformed one gets a
+  400.
+* Chunked bodies, and bodies longer than their declared length, are counted
+  as they arrive and cut off at the cap.
+* On overflow the middleware sends the 413 itself, tells the app the client
+  disconnected, and drops anything the app tries to send afterwards. The
+  first version raised an exception instead, and a live test against uvicorn
+  showed FastAPI's body parser catching it and answering 400. The unit tests
+  had missed that.
+* The cap defaults to `6 × max_request_chars + 64 KiB`. Six bytes per
+  character covers clients that send ASCII-only JSON (`\uXXXX` escapes), so a
+  request that passes the character limit is never cut off by the byte limit.
+  `max_body_bytes` overrides it.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

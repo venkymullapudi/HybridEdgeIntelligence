@@ -144,6 +144,8 @@ class Settings:
     # Request limits (reject with 413): stop oversized prompts from burning memory or
     # escalating straight to Claude because they overflow the edge context.
     max_request_chars: int = 100000
+    # Raw body cap, enforced before the body is read. 0 = derive from max_request_chars.
+    max_body_bytes: int = 0
     # Idle gap after which /v1/infer/stream sends an SSE comment heartbeat.
     sse_heartbeat_s: float = 15.0
     max_messages: int = 200
@@ -173,6 +175,12 @@ class Settings:
             setattr(s, key, _coerce(getattr(s, key), raw, key))
         s.validate()
         return s
+
+    @property
+    def effective_max_body_bytes(self) -> int:
+        """Up to 6 bytes per character (a \\uXXXX escape) plus JSON/field overhead, so a
+        request that passes max_request_chars is never cut off by the byte cap."""
+        return self.max_body_bytes or (6 * self.max_request_chars + 64 * 1024)
 
     def validate(self) -> None:
         if not 0.0 <= self.gate_threshold <= 1.0:
