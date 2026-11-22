@@ -856,6 +856,29 @@ chance of success.
   the test suite, so no test can ever make a billed call through ambient
   credentials. The existing suite already passes under it.
 
+## 61. Now that 400s trip the shared breaker, can a client trip it on purpose?
+
+Question 60 made 400s count toward the circuit breaker, which is shared by
+every tenant on a node. That creates a new risk. A client that can *craft* a
+request Claude rejects could hold the breaker open, and every tenant's
+escalations would degrade.
+
+Probing the obvious candidate, a **lone UTF-16 surrogate** (`"\ud800"`), turned
+up something worse: it never reached Claude at all. It's valid JSON and passed
+validation, but can't be encoded as UTF-8, so the first `.encode()` (the cache
+key) raised. Every such request was an **unhandled HTTP 500** with a logged
+traceback, triggerable at will by any client.
+
+**Fix:** conversation validation rejects lone surrogates with a 422 naming the
+message, before the text reaches the cache, records, the edge model or Claude.
+Correctly paired surrogates (real emoji) and all valid Unicode still pass.
+
+**Remaining risk (accepted, see "not changed"):** with input validated this
+way, I know of no other client-controllable request that Claude rejects. If
+one turns up, the answer is validating it too, not exempting 400s from the
+breaker again. That exemption is exactly what let an exhausted credit balance
+retry forever.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
@@ -868,3 +891,8 @@ chance of success.
   never scale itself back up. It would need an external trigger (scheduled
   scaling, or demand-driven Global Accelerator traffic dials). Until then,
   each region's floor is one GPU node.
+* **Per-caller breakers:** the breaker is per node, not per tenant, so a
+  client able to provoke upstream errors could degrade everyone's
+  escalations. Input validation closes the known ways (questions 28, 47 and
+  61). Per-caller breakers would isolate tenants, but would also hide genuine
+  account-wide failures from the breaker.

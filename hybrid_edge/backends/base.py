@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Protocol
 
@@ -93,6 +94,9 @@ def last_user(messages: List[ChatMessage]) -> Optional[str]:
     return None
 
 
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
 def conversation_problem(messages: List[ChatMessage]) -> Optional[str]:
     """Why a conversation can't be served, or None.
 
@@ -108,6 +112,10 @@ def conversation_problem(messages: List[ChatMessage]) -> Optional[str]:
     if not turns:
         return "the conversation needs at least one user message"
     for i, m in enumerate(messages):
+        if _LONE_SURROGATE.search(m.content):
+            # Valid JSON (\ud800) but not encodable as UTF-8: it would crash cache keys and
+            # records, and could be used to make every upstream call fail on purpose.
+            return f"message {i} ({m.role}) contains invalid Unicode (a lone surrogate)"
         if m.role != "system" and not m.content.strip():
             # Claude rejects empty content: catch it here as a 422, not as a degraded answer.
             return f"message {i} ({m.role}) is empty"
