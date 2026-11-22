@@ -213,7 +213,15 @@ class ClaudeEscalator:
         return (self.enabled and not self.breaker.open and self.bucket.available()
                 and self.key_buckets.get(caller).available())
 
-    def _request(self, messages: List[ChatMessage], edge_draft: Optional[str]) -> Dict[str, Any]:
+    def _max_tokens(self, client_max_tokens: Optional[int]) -> int:
+        """Honour the client's length limit without starving adaptive thinking: Claude's
+        max_tokens covers thinking *and* the answer, so leave headroom for thinking."""
+        if client_max_tokens is None:
+            return self.s.cloud_max_tokens
+        return min(self.s.cloud_max_tokens, client_max_tokens + self.s.cloud_thinking_headroom_tokens)
+
+    def _request(self, messages: List[ChatMessage], edge_draft: Optional[str],
+                 client_max_tokens: Optional[int] = None) -> Dict[str, Any]:
         system = self.s.system_prompt
         convo: List[Dict[str, str]] = []
         for m in messages:
@@ -236,7 +244,7 @@ class ClaudeEscalator:
             }
         req: Dict[str, Any] = {
             "model": self.model,
-            "max_tokens": self.s.cloud_max_tokens,
+            "max_tokens": self._max_tokens(client_max_tokens),
             "system": system,
             "messages": convo,
             "output_config": {"effort": self.s.cloud_effort},
@@ -338,22 +346,24 @@ class ClaudeEscalator:
         )
 
     async def answer(self, messages: List[ChatMessage], edge_draft: Optional[str] = None,
-                     caller: str = "anon", shadow: bool = False) -> CloudAnswer:
+                     caller: str = "anon", shadow: bool = False,
+                     max_tokens: Optional[int] = None) -> CloudAnswer:
         self._admit(caller, shadow)
-        req = self._request(messages, None if shadow else edge_draft)
+        req = self._request(messages, None if shadow else edge_draft, max_tokens)
         t0 = time.perf_counter()
         resp = await self._guard(self.client.beta.messages.create(**req))
         return self._to_answer(resp, t0)
 
     async def stream_answer(self, messages: List[ChatMessage], edge_draft: Optional[str],
-                            on_text: Callable[[str], Awaitable[None]], caller: str = "anon") -> CloudAnswer:
+                            on_text: Callable[[str], Awaitable[None]], caller: str = "anon",
+                            max_tokens: Optional[int] = None) -> CloudAnswer:
         """Like answer(), but forwards text to ``on_text`` as Claude writes it.
 
         The returned CloudAnswer (from the final message) is authoritative: with
         server-side refusal fallbacks, text streamed before a mid-stream switch to the
         fallback model can differ from the final answer."""
         self._admit(caller, shadow=False)
-        req = self._request(messages, edge_draft)
+        req = self._request(messages, edge_draft, max_tokens)
         t0 = time.perf_counter()
 
         async def consume() -> Any:

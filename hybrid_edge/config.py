@@ -78,6 +78,9 @@ class Settings:
     cloud_model: str = "claude-opus-5-5"
     cloud_effort: str = "medium"
     cloud_max_tokens: int = 16000
+    # When a client sets max_tokens, escalations get max_tokens + this much room for
+    # adaptive thinking (capped at cloud_max_tokens), instead of always cloud_max_tokens.
+    cloud_thinking_headroom_tokens: int = 8000
     cloud_timeout_s: float = 120.0
     # Total budget for one escalation, SDK retries included. Keep below the load
     # balancer's idle timeout (180 s in the Terraform module).

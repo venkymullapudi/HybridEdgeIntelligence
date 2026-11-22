@@ -247,7 +247,7 @@ class HybridOrchestrator:
         try:
             draft = primary.text if primary else None
             if on_event is None:
-                cloud = await self.escalator.answer(messages, draft, caller=caller)
+                cloud = await self.escalator.answer(messages, draft, caller=caller, max_tokens=max_tokens)
             else:
                 if self.escalator.can_escalate(caller):  # don't announce an escalation that can't happen
                     await on_event({"type": "escalating", "request_id": rid,
@@ -260,7 +260,8 @@ class HybridOrchestrator:
                     streamed[0] += len(text)
                     await on_event({"type": "delta", "text": text})
 
-                cloud = await self.escalator.stream_answer(messages, draft, forward, caller=caller)
+                cloud = await self.escalator.stream_answer(messages, draft, forward, caller=caller,
+                                                           max_tokens=max_tokens)
         except CloudUnavailable as exc:
             reasons.append(f"cloud unavailable: {exc}")
             if streamed[0]:

@@ -1011,6 +1011,25 @@ something different, with no warning.
   and `gate_allow_calibration_mismatch` overrides, as for edge models.
 * Older calibrations without a recorded config still load.
 
+## 67. Does a client's `max_tokens` limit Claude?
+
+**No. Only the edge honoured it.** Every escalation was sent with the fixed
+`cloud_max_tokens = 16000`. A client asking for a 50-token answer could get,
+and pay for, thousands of output tokens from Claude, plus the latency of
+generating them.
+
+Passing the limit straight through would break things the other way. With
+adaptive thinking, Claude's `max_tokens` covers thinking *and* the answer, so a
+small cap leaves no room to think, and the result is usually no text at all.
+
+**Fix:** escalations get
+`min(cloud_max_tokens, client max_tokens + cloud_thinking_headroom_tokens)`
+(default headroom 8,000), on both the plain and streaming endpoints. Without a
+client limit, Claude gets `cloud_max_tokens` as before. If thinking still uses
+the whole budget, question 29's empty-answer handling degrades to the edge
+answer. Shadow calls keep the full cap, since they produce reference answers
+for the judge.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
