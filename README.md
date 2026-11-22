@@ -76,7 +76,7 @@ Each response tells you what happened:
 | `POST /v1/infer` | `{"prompt": "…"}` or `{"messages": [{role, content}…]}`. Optional fields: `route` (`auto`, `edge` or `cloud`), `min_confidence` (overrides τ for this request), `max_tokens`, `use_cache`, `include_signals` |
 | `POST /v1/infer/stream` | The same request, as server-sent events. Edge and cached answers arrive as one `done` event. An escalation sends `escalating`, then `delta` events as Claude writes, then `done` (always authoritative, with `cloud_first_token_ms`). Failure ends with `error`. Idle gaps carry `: ping` heartbeats |
 | `GET /healthz` | liveness check for the gateway process |
-| `GET /readyz` | readiness: returns 503 when the local model is down. ALB and Global Accelerator use it to drain an edge |
+| `GET /readyz` | readiness: returns 503 when the local model is down, or isn't the configured `edge_model`. ALB and Global Accelerator use it to drain an edge |
 | `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, cloud-unavailable counts by reason, per-source latency histograms (for p95/p99), cloud tokens and cost. Needs an API key when keys are configured |
 
 Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set. Without configured keys, budgets and cache scope are per client address: the rightmost `X-Forwarded-For` hop, as appended by the ALB. Set `HEI_TRUST_FORWARDED_FOR=false` when there's no load balancer in front.

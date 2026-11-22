@@ -189,6 +189,10 @@ class Settings:
                      "gate_abort_window_prob"):
             if not 0.0 <= getattr(self, name) <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
+        if not 0 <= self.edge_top_logprobs <= 20:
+            # OpenAI-compatible servers cap top_logprobs at 20 (vLLM: --max-logprobs);
+            # above that every edge call is a 400 and every request escalates.
+            raise ValueError("edge_top_logprobs must be between 0 and 20")
         if self.edge_system_role not in ("native", "merge"):
             raise ValueError("edge_system_role must be native or merge")
         if self.cloud_effort not in ("low", "medium", "high", "xhigh", "max"):

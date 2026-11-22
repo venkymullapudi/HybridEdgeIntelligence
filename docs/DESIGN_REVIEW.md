@@ -641,6 +641,29 @@ shipped green.
 * checks the container runs as the non-root user (uid 10001);
 * dumps the container logs if any step fails.
 
+## 51. Can an edge report ready while it can't serve?
+
+**Yes.** `/readyz` only checked that vLLM's `/models` endpoint returned 200. If
+`edge_model` named a model the server isn't serving (a typo'd id, a
+half-finished model swap), every generation failed with "model not found" and
+escalated at full price. Readiness stayed green, so the ALB and Global
+Accelerator kept routing that region's traffic to the broken edge instead of
+failing over.
+
+**Fix:** readiness also requires the configured model id to appear in
+`/models`. A server that's reachable but has the wrong model loaded (or
+nothing loaded yet) is now not ready, so its region is drained.
+
+## 52. Which settings can silently send everything to Claude?
+
+`edge_top_logprobs` was one. OpenAI-compatible servers cap `top_logprobs` at 20
+(vLLM's `--max-logprobs`, set to 20 in Terraform). Any larger value turned every
+edge call into a 400, and so every request into an escalation.
+
+**Fix:** the setting is validated to the range 0–20 at startup, so a bad value
+fails the deploy (and ECS's circuit breaker rolls it back) instead of
+quietly burning budget.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

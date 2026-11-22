@@ -91,11 +91,23 @@ class OpenAICompatBackend:
         return acc.result((time.perf_counter() - t0) * 1000)
 
     async def ready(self) -> bool:
+        """The server is up *and* serves the configured model.
+
+        A reachable server with a different model loaded (a typo'd model id, a
+        half-finished swap) fails every generation with "model not found"; if
+        readiness only checked reachability, the edge would look healthy while
+        escalating everything."""
         try:
             resp = await self._client.get("/models", timeout=3.0)
-            return resp.status_code == 200
         except httpx.HTTPError:
             return False
+        if resp.status_code != 200:
+            return False
+        try:
+            served = {m.get("id") for m in resp.json().get("data", [])}
+        except (ValueError, AttributeError):
+            return False
+        return self.model in served
 
     async def aclose(self) -> None:
         await self._client.aclose()
