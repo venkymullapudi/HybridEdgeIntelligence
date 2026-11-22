@@ -24,6 +24,7 @@ import anthropic
 
 from .cloud.claude import build_claude_client, fallback_kwargs, model_id
 from .config import Settings
+from .records_io import ReadStats, iter_records
 
 JUDGE_SYSTEM = (
     "You grade answers from a small model against a reference answer from a stronger model. "
@@ -127,7 +128,7 @@ async def run(records: List[Dict[str, Any]], settings: Settings, client: Any, co
 
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("records")
+    ap.add_argument("records", nargs="+", help="record files, .gz files or directories")
     ap.add_argument("-o", "--output", required=True)
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--limit", type=int, default=None, help="max records to judge (cost cap)")
@@ -138,8 +139,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     settings = Settings.load()
     if settings.cloud_provider == "none":
         raise SystemExit("set HEI_CLOUD_PROVIDER to anthropic or bedrock to run the judge")
-    with open(args.records, "r", encoding="utf-8") as fh:
-        records = [json.loads(line) for line in fh if line.strip()]
+    stats = ReadStats()
+    records = list(iter_records(args.records, stats))
+    stats.report()
 
     def checkpoint() -> None:
         write_records(records, args.output)

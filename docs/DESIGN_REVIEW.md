@@ -960,6 +960,30 @@ and 0 degraded.
 include it. `tests/test_concurrency.py` keeps the stress run (450 requests
 per CI run) and a targeted outage check. Both fail on the previous code.
 
+## 65. Can the offline tools read what the deployment actually writes?
+
+**No.** Firehose delivers records to S3 as **GZIP-compressed** objects, with no
+`.gz` suffix, many per hour under
+`escalations/region=<r>/YYYY/MM/DD/HH/`. `hybrid-edge-label` and
+`hybrid-edge-calibrate` read exactly one plain-text JSONL file. Following the
+README meant downloading, decompressing and concatenating hundreds of objects
+by hand first, with no tooling for it. Separately, one malformed line (a
+partial last line after a crash, a stray non-object) made `json.loads` raise
+and killed the whole run, which for the judge meant a run already paid for.
+
+**Fix:** `hybrid_edge/records_io.py`, shared by both tools:
+
+* Accepts any mix of files, gzip files (detected by content, not file
+  extension) and directories, searched recursively. So
+  `aws s3 sync s3://<bucket>/escalations/ data/` followed by
+  `hybrid-edge-label data/ …` works directly.
+* Malformed lines and non-object records are skipped and counted, with a
+  warning, instead of aborting.
+* The calibrator also ignores records whose `features` aren't numeric.
+
+Tests build a mock Firehose tree (gzip objects with no suffix, nested date
+partitions) and run both CLIs on it end to end.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

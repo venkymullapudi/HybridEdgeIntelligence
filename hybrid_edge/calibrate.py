@@ -17,10 +17,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from .gate.confidence import Calibrator, _sigmoid
 from .gate.signals import jaccard
+from .records_io import ReadStats, iter_records
 
 FEATURES = ["mean_prob", "min_window_prob", "entropy_conf", "consistency", "hedge", "truncated", "log_len"]
 
@@ -32,37 +33,40 @@ def _row(r: Sequence) -> Row:
     return (r[0], int(r[1]), float(r[2]) if len(r) > 2 else 1.0)
 
 
-def edge_models(path: str) -> Dict[Optional[str], int]:
+def _paths(p: Union[str, Sequence[str]]) -> List[str]:
+    return [p] if isinstance(p, str) else list(p)
+
+
+def edge_models(paths: Union[str, Sequence[str]]) -> Dict[Optional[str], int]:
     counts: Dict[Optional[str], int] = {}
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            if line.strip():
-                m = json.loads(line).get("edge_model")
-                counts[m] = counts.get(m, 0) + 1
+    for r in iter_records(_paths(paths)):
+        m = r.get("edge_model")
+        counts[m] = counts.get(m, 0) + 1
     return counts
 
 
-def load(path: str, weak_labels: bool, weak_threshold: float, edge_model: Optional[str] = None) -> List[Row]:
+def load(paths: Union[str, Sequence[str]], weak_labels: bool, weak_threshold: float,
+         edge_model: Optional[str] = None, stats: Optional[ReadStats] = None) -> List[Row]:
     """Rows carry ``sample_weight`` so shadow records (sampled at ``shadow_rate``)
-    count for the confident traffic they represent."""
+    count for the confident traffic they represent. Accepts files, .gz files and
+    directories (e.g. a synced copy of the Firehose bucket)."""
     rows: List[Row] = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            r = json.loads(line)
-            if edge_model is not None and r.get("edge_model") != edge_model:
-                continue
-            feats = r.get("features")
-            if not feats:
-                continue
-            label: Optional[int] = r.get("label")
-            if label is None and weak_labels and r.get("edge_answer") and r.get("cloud_answer"):
-                label = int(jaccard(r["edge_answer"], r["cloud_answer"]) >= weak_threshold)
-            if label is None:
-                continue
-            rows.append((feats, int(label), float(r.get("sample_weight") or 1.0)))
+    for r in iter_records(_paths(paths), stats):
+        if edge_model is not None and r.get("edge_model") != edge_model:
+            continue
+        feats = r.get("features")
+        if not isinstance(feats, dict) or not feats:
+            continue
+        label: Optional[int] = r.get("label")
+        if label is None and weak_labels and r.get("edge_answer") and r.get("cloud_answer"):
+            label = int(jaccard(str(r["edge_answer"]), str(r["cloud_answer"])) >= weak_threshold)
+        if label is None:
+            continue
+        try:
+            rows.append(({k: float(v) for k, v in feats.items()}, int(label), float(r.get("sample_weight") or 1.0)))
+        except (TypeError, ValueError):
+            if stats is not None:
+                stats.skipped += 1
     return rows
 
 
@@ -123,7 +127,7 @@ def sweep(cal: Calibrator, rows: Sequence[Sequence], step: float = 0.05) -> List
 
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("records")
+    ap.add_argument("records", nargs="+", help="record files, .gz files or directories")
     ap.add_argument("-o", "--output", default="calibration.json")
     ap.add_argument("--target-precision", type=float, default=0.95)
     ap.add_argument("--weak-labels", action="store_true")
@@ -141,7 +145,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             raise SystemExit(f"records mix edge models {sorted(map(str, models))}; pick one with --edge-model")
         edge_model = next(iter(models), None)
 
-    rows = load(args.records, args.weak_labels, args.weak_threshold, edge_model)
+    stats = ReadStats()
+    rows = load(args.records, args.weak_labels, args.weak_threshold, edge_model, stats)
+    stats.report()
     if len(rows) < 20 or len({y for _, y, _ in rows}) < 2:
         raise SystemExit(f"need >= 20 labelled rows with both classes, got {len(rows)}")
     cal = fit(rows)

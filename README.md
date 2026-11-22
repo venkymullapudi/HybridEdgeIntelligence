@@ -179,10 +179,11 @@ Notes:
 Choosing τ trades **escalation rate** (cost) against **edge precision** (quality). Once records are flowing:
 
 1. Collect records that include **shadow** calls (`shadow_rate > 0`). Without them you only have labels for answers the gate already rejected.
-2. Label them with the Claude judge, which decides whether each edge answer was acceptable using Claude's answer as the reference. Every judged record is a billed call, and `--limit` caps the spend. Human labels in a `label` field work too.
+2. Copy the records down and label them with the Claude judge. Both tools accept files, Firehose's gzip objects and whole directories, and they skip (and count) malformed lines. The judge decides whether each edge answer was acceptable using Claude's answer as the reference. Every judged record is a billed call, and `--limit` caps the spend. Human labels in a `label` field work too.
 
    ```bash
-   hybrid-edge-label records.jsonl -o labelled.jsonl --limit 5000
+   aws s3 sync s3://<records-bucket>/escalations/ data/escalations/
+   hybrid-edge-label data/escalations/ -o labelled.jsonl --limit 5000
    ```
 
    Progress is checkpointed (`--checkpoint-every`, default 100) and saved if the run is interrupted. To resume without re-paying for finished labels, re-run with the output file as input.
