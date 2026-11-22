@@ -1051,6 +1051,31 @@ calibration data matches what the gate saw.
 the cost, but Claude's answer itself can be longer than `max_tokens`. The
 README now says so.
 
+## 69. Which code has never run in a test?
+
+Instead of guessing where bugs hide, I measured branch coverage: **93%**
+overall. Most misses were config validation and logging. But the uncovered
+lines in the request path were almost all **failure handling that had never
+executed once**:
+
+* real HTTP failures from the edge server (a vLLM `503` while loading, a `500`
+  out-of-memory error, a refused connection), on both transports. Every edge
+  test had only simulated `200` responses;
+* the **entire non-streaming edge path** (`HEI_EDGE_STREAM=false`), a
+  supported production setting with no tests at all;
+* `route: "edge"` with the edge down (it must be a 503, never a silent
+  escalation);
+* the plain endpoint's HTTP 503 (only the stream endpoint's was tested);
+* consistency sampling failing, and the refusal-fallback reason.
+
+**Result:** 13 tests in `tests/test_failure_paths.py`. They all passed first
+time: these paths were correct, just unproven. They are also the most common
+real-world failures, so they're now locked in. Coverage is 94%, and 96–97% in
+the orchestrator, edge backend and server.
+
+**Guard:** CI now runs the suite under branch coverage with a floor
+(`fail_under = 92` in `pyproject.toml`), so coverage can't quietly erode.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

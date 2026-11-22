@@ -10,3 +10,6 @@ terraform.tfvars
 data/
 .env
 .venv*/
+.coverage
+.coverage.*
+htmlcov/

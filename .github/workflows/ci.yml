@@ -19,7 +19,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e '.[dev]'
-      - run: pytest -q
+      # Branch coverage with a floor (pyproject [tool.coverage.report] fail_under).
+      - run: coverage run -m pytest -q
+      - run: coverage report --skip-covered --show-missing
 
   terraform:
     runs-on: ubuntu-latest
