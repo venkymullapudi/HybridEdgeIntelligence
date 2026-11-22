@@ -294,8 +294,10 @@ class ClaudeEscalator:
             self.breaker.failure()
             raise CloudUnavailable(f"cloud rejected credentials: {type(exc).__name__}: {exc}", "auth") from exc
         except anthropic.BadRequestError as exc:
-            # A malformed request is our bug, not a cloud outage: don't trip the breaker.
-            self.breaker.release()
+            # Counts toward the breaker: a one-off 400 is reset by the next success, but a
+            # 400 on *every* request (an exhausted credit balance, a config-wide request
+            # bug) will never succeed, so stop calling instead of failing each escalation.
+            self.breaker.failure()
             raise CloudUnavailable(f"cloud rejected request: {exc}", "rejected") from exc
         except (anthropic.RateLimitError, anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
             self.breaker.failure()

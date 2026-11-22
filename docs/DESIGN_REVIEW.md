@@ -824,6 +824,38 @@ True scale-to-zero would need something to wake a region before traffic
 arrives (scheduled scaling, or a Global Accelerator traffic dial driven by
 demand elsewhere). That's added to "not changed".
 
+## 60. Does the "no GPU" demo really stay local, and what happens when every call is a 400?
+
+Found by running the README quickstart exactly as written.
+
+**The demo made real API calls.** The quickstart started the mock edge with
+the default `cloud_provider = "anthropic"`, and implied that without
+`ANTHROPIC_API_KEY` there would be no escalations. But the Anthropic SDK
+discovers credentials on its own: `ANTHROPIC_AUTH_TOKEN`, or an
+`ant auth login` profile. On a machine with any such credential, the "local"
+demo escalated hard prompts to the real API, billed to that account. The test
+run that found this was rejected for low credit balance, so nothing was
+billed.
+
+**Persistent 400s never opened the breaker.** That rejection is a 400
+(`invalid_request_error`), which the escalator deliberately didn't count
+toward the circuit breaker, on the theory that a 400 is a one-off bad request.
+So with an exhausted balance, or any config-wide request bug, *every*
+escalation still called the API and failed, adding latency and load with no
+chance of success.
+
+**Fix:**
+
+* The quickstart runs with `HEI_CLOUD_PROVIDER=none`, and the README explains
+  SDK credential discovery and that dropping that setting means billed calls
+  to whatever account the SDK finds.
+* 400s now count toward the breaker. A one-off 400 is reset by the next
+  success. A 400 on every request opens the breaker after
+  `cloud_breaker_failures`, and the metrics show `rejected`, then `breaker`.
+* A test fixture makes building a real Anthropic or Bedrock client fail inside
+  the test suite, so no test can ever make a billed call through ambient
+  credentials. The existing suite already passes under it.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

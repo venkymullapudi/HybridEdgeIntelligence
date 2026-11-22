@@ -98,11 +98,13 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest -q
 ```
 
-No GPU: use the mock edge model. Set `ANTHROPIC_API_KEY` to get real escalations, or use `HEI_CLOUD_PROVIDER=none`.
+No GPU: use the mock edge model, with escalation turned off:
 
 ```bash
-HEI_EDGE_BACKEND=mock .venv/bin/hybrid-edge
+HEI_EDGE_BACKEND=mock HEI_CLOUD_PROVIDER=none .venv/bin/hybrid-edge
 ```
+
+To get real escalations, drop `HEI_CLOUD_PROVIDER=none`. Note that the Anthropic SDK finds credentials **on its own**: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an `ant auth login` profile. Without `HEI_CLOUD_PROVIDER=none`, hard prompts are sent to the real API and billed to whichever account it finds, even with no key exported.
 
 ```bash
 curl -s localhost:8080/v1/infer -H 'content-type: application/json' -d '{"prompt":"prove this hard theorem","include_signals":true}'

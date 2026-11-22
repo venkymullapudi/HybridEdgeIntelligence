@@ -104,3 +104,16 @@ def fake_claude() -> FakeClaude:
 def orch(settings, fake_claude):
     return build_orchestrator(settings, escalator=ClaudeEscalator(settings, client=fake_claude),
                               records=MemorySink(settings))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude(monkeypatch):
+    """Tests must never reach the real Anthropic API: the SDK finds credentials on its
+    own (env, `ant auth login` profiles), so an un-faked client would make billed calls."""
+    import anthropic
+
+    def refuse(*a, **k):
+        raise AssertionError("test tried to build a real Anthropic client; pass a fake client")
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", refuse)
+    monkeypatch.setattr(anthropic, "AsyncAnthropicBedrockMantle", refuse)
