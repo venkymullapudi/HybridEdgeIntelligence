@@ -188,6 +188,12 @@ resource "aws_iam_role_policy" "task" {
         Action   = ["firehose:PutRecord", "firehose:PutRecordBatch"]
         Resource = [aws_kinesis_firehose_delivery_stream.records.arn]
       }],
+      # Read-only access to exactly the calibration object, nothing else in the bucket.
+      var.gate_calibration_s3_uri == "" ? [] : [{
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["arn:aws:s3:::${trimprefix(var.gate_calibration_s3_uri, "s3://")}"]
+      }],
       var.cloud_provider == "bedrock" ? [{
         Effect   = "Allow"
         Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
@@ -279,6 +285,7 @@ resource "aws_ecs_task_definition" "edge" {
         { name = "HEI_EDGE_SYSTEM_ROLE", value = var.edge_system_role },
         { name = "HEI_EDGE_CONTEXT_TOKENS", value = tostring(var.edge_max_model_len) },
         { name = "HEI_GATE_THRESHOLD", value = tostring(var.gate_threshold) },
+        { name = "HEI_GATE_CALIBRATION_PATH", value = var.gate_calibration_s3_uri },
         { name = "HEI_GATE_CONSISTENCY_SAMPLES", value = tostring(var.gate_consistency_samples) },
         { name = "HEI_CLOUD_PROVIDER", value = var.cloud_provider },
         { name = "HEI_CLOUD_MODEL", value = var.cloud_model },

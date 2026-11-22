@@ -702,6 +702,27 @@ sets `HEI_TRUST_FORWARDED_FOR=true`. A static test fails if that line is ever
 removed, since without it every caller behind the ALB would share the ALB's
 address and one budget.
 
+## 55. Can a calibration actually reach production?
+
+**No. The flywheel led nowhere.** Shadow calls, the judge and the calibrator
+produced `calibration.json`, but the gateway could only read a local path, the
+Docker image doesn't include one, and Terraform had no setting for it. On AWS,
+the only route was hand-building a custom image per calibration, so deployed
+edges ran the uncalibrated heuristic indefinitely.
+
+**Fix:**
+
+* `gate_calibration_path` also accepts `s3://bucket/key`.
+* Terraform's `gate_calibration_s3_uri` passes the URI to every edge, and
+  grants `s3:GetObject` on **exactly that object**, not the whole bucket.
+* Rolling out a calibration is changing the URI. Use a new key per version
+  (`calibration-v3.json`): changing the URI rolls the edges, and reverting it
+  rolls back.
+* Startup safety from question 21 still applies. A calibration fit on a
+  different edge model, or one that can't be read, stops the gateway from
+  starting, and ECS's deployment circuit breaker rolls the change back rather
+  than serving with it.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

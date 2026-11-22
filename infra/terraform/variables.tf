@@ -170,3 +170,13 @@ variable "alarm_emails" {
   type        = list(string)
   default     = []
 }
+
+variable "gate_calibration_s3_uri" {
+  description = "s3://bucket/key of a calibration.json from hybrid-edge-calibrate. Empty = heuristic gate. Use a new key per version (calibration-v3.json): changing the URI rolls the edges, and reverting it rolls back."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.gate_calibration_s3_uri == "" || can(regex("^s3://[^/]+/.+", var.gate_calibration_s3_uri))
+    error_message = "gate_calibration_s3_uri must look like s3://bucket/key."
+  }
+}

@@ -165,3 +165,8 @@ variable "degraded_rate_alarm" {
   type        = number
   default     = 0.05
 }
+
+variable "gate_calibration_s3_uri" {
+  type    = string
+  default = ""
+}

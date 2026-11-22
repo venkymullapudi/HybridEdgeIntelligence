@@ -19,6 +19,7 @@ locals {
     ingress_cidrs            = var.ingress_cidrs
     shadow_rate              = var.shadow_rate
     edge_system_role         = var.edge_system_role
+    calibration              = var.gate_calibration_s3_uri
     per_key                  = var.max_escalations_per_key_per_min
     records_bucket_arn       = var.records_residency == "central" ? aws_s3_bucket.records[0].arn : ""
   }
@@ -33,6 +34,7 @@ module "edge_us_east_1" {
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
   edge_system_role                = local.edge_args.edge_system_role
+  gate_calibration_s3_uri         = local.edge_args.calibration
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes
@@ -66,6 +68,7 @@ module "edge_eu_west_1" {
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
   edge_system_role                = local.edge_args.edge_system_role
+  gate_calibration_s3_uri         = local.edge_args.calibration
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes
@@ -99,6 +102,7 @@ module "edge_ap_south_1" {
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
   edge_system_role                = local.edge_args.edge_system_role
+  gate_calibration_s3_uri         = local.edge_args.calibration
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes
@@ -132,6 +136,7 @@ module "edge_ap_southeast_1" {
   vllm_image                      = local.edge_args.vllm_image
   edge_model                      = local.edge_args.edge_model
   edge_system_role                = local.edge_args.edge_system_role
+  gate_calibration_s3_uri         = local.edge_args.calibration
   instance_type                   = local.edge_args.instance_type
   min_nodes                       = local.edge_args.min_nodes
   max_nodes                       = local.edge_args.max_nodes

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..config import GateWeights
 from .signals import Signals
@@ -27,9 +27,9 @@ class Calibrator:
         return _sigmoid(z)
 
     @classmethod
-    def load(cls, path: str) -> "Calibrator":
-        with open(path, "r", encoding="utf-8") as fh:
-            raw = json.load(fh)
+    def load(cls, path: str, s3_client: Any = None) -> "Calibrator":
+        """Load from a local path or an ``s3://bucket/key`` URI (how deployed edges get it)."""
+        raw = json.loads(read_text(path, s3_client))
         return cls(weights=raw["weights"], bias=float(raw["bias"]), threshold=raw.get("threshold"),
                    edge_model=raw.get("edge_model"))
 
@@ -104,6 +104,20 @@ class ConfidenceGate:
             reasons=reasons,
             method="calibrated" if self.calibrator else "heuristic",
         )
+
+
+def read_text(path: str, s3_client: Any = None) -> str:
+    if path.startswith("s3://"):
+        bucket, _, key = path[5:].partition("/")
+        if not bucket or not key:
+            raise ValueError(f"bad S3 URI {path!r}; expected s3://bucket/key")
+        if s3_client is None:
+            import boto3  # optional dependency, in the image via the [aws] extra
+
+            s3_client = boto3.client("s3")
+        return s3_client.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8")
+    with open(path, "r", encoding="utf-8") as fh:
+        return fh.read()
 
 
 def _sigmoid(z: float) -> float:
