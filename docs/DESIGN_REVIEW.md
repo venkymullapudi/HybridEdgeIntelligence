@@ -1076,6 +1076,22 @@ the orchestrator, edge backend and server.
 **Guard:** CI now runs the suite under branch coverage with a floor
 (`fail_under = 92` in `pyproject.toml`), so coverage can't quietly erode.
 
+## 70. Does the image start with the file record sink at its default path?
+
+**No. It crashed on startup.** `record_path` defaults to
+`data/escalations.jsonl`, relative to `WORKDIR /app`. `/app` is created as
+root, but the image runs as the unprivileged `app` user (uid 10001), so
+`RecordSink`'s `os.makedirs("data")` raised `PermissionError` and the gateway
+never came up. docker-compose avoided it by setting `/tmp/...`, so it went
+unnoticed. No Python test could catch it, since it lives in the image's file
+permissions.
+
+**Fix:** the Dockerfile creates `/app/data` and gives it to the `app` user
+before switching to it. The CI image smoke test (question 50) now runs with
+`HEI_RECORD_SINK=file` at the default path, sends a low-confidence prompt,
+and checks that an escalation record was actually written inside the
+container. A static test guards the Dockerfile line.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

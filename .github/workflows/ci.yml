@@ -44,8 +44,10 @@ jobs:
       # HEALTHCHECK, and runs as the non-root user.
       - name: Smoke-test the image
         run: |
+          # File record sink at its default path: it must be writable by the non-root user.
           docker run -d --name gw -p 8080:8080 \
             -e HEI_EDGE_BACKEND=mock -e HEI_CLOUD_PROVIDER=none -e HEI_EMIT_EMF=false \
+            -e HEI_RECORD_SINK=file \
             hybrid-edge-gateway:ci
           for i in $(seq 1 60); do
             status=$(docker inspect --format '{{.State.Health.Status}}' gw)
@@ -58,6 +60,12 @@ jobs:
           curl -sfN localhost:8080/v1/infer/stream -H 'content-type: application/json' \
             -d '{"prompt":"hello"}' | grep -q '^event: done'
           test "$(docker exec gw id -u)" = 10001
+          # A low-confidence prompt is an escalation, so it must produce a record.
+          curl -sf localhost:8080/v1/infer -H 'content-type: application/json' \
+            -d '{"prompt":"prove this hard theorem"}' > /dev/null
+          sleep 3
+          docker exec gw sh -c 'test -s data/escalations.jsonl && head -c 300 data/escalations.jsonl'
+          docker exec gw python -c "import json; r=json.loads(open('data/escalations.jsonl').readline()); assert r['escalated'], r"
       - name: Container logs
         if: failure()
         run: docker logs gw || true

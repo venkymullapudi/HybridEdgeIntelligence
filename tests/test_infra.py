@@ -96,3 +96,13 @@ def test_scaling_settings_are_checked_at_plan_time():
 def test_readme_does_not_promise_scale_to_zero():
     readme = (TF.parents[1] / "README.md").read_text()
     assert "min_nodes = 0" not in readme
+
+
+def test_image_data_dir_is_writable_by_the_runtime_user():
+    """The file sink defaults to data/escalations.jsonl under root-owned /app; the image
+    runs as uid 10001, so that directory must be created and handed to it."""
+    dockerfile = (TF.parents[1] / "docker" / "Dockerfile").read_text()
+    assert "mkdir -p /app/data && chown app:app /app/data" in dockerfile
+    assert dockerfile.index("chown app:app /app/data") < dockerfile.index("USER app")
+    from hybrid_edge.config import Settings
+    assert Settings().record_path == "data/escalations.jsonl"  # the default the image must support

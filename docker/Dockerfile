@@ -9,7 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY hybrid_edge ./hybrid_edge
-RUN pip install ".[aws]" && useradd --uid 10001 --create-home app
+# /app is root-owned; give the unprivileged user a writable data dir so the file
+# record sink's default path (data/escalations.jsonl) works.
+RUN pip install ".[aws]" && useradd --uid 10001 --create-home app \
+    && mkdir -p /app/data && chown app:app /app/data
 
 USER app
 EXPOSE 8080
