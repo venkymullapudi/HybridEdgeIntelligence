@@ -581,6 +581,26 @@ cache read costs $0.20/MTok against $4/MTok uncached, about 20× less.
   wrong once caching was on. Responses report `cloud_cache_read_tokens` and
   `cloud_cache_write_tokens`.
 
+## 47. What happens to empty content?
+
+**It turned into a late, confusing failure, and caching made one case worse.**
+The Claude API rejects empty text. After question 46, an empty system prompt
+(a client sending `{"role": "system", "content": ""}`, or `system_prompt`
+configured empty) went out as an empty text block with a `cache_control`
+marker. The API returned a 400, and every such escalation degraded. Empty or
+whitespace-only user and assistant messages passed validation and failed the
+same way, only once they reached Claude.
+
+**Fix:**
+
+* An empty system prompt is left out of the Claude request entirely, which is
+  the faithful translation, with or without caching.
+* A user or assistant message with empty content is a conversation problem: a
+  422 naming the message, before any model runs. An empty system message is
+  still allowed.
+
+Regression tests fail on the previous code.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

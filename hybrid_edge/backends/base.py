@@ -107,6 +107,10 @@ def conversation_problem(messages: List[ChatMessage]) -> Optional[str]:
     turns = messages[1:] if messages[0].role == "system" else messages
     if not turns:
         return "the conversation needs at least one user message"
+    for i, m in enumerate(messages):
+        if m.role != "system" and not m.content.strip():
+            # Claude rejects empty content: catch it here as a 422, not as a degraded answer.
+            return f"message {i} ({m.role}) is empty"
     if turns[-1].role != "user":
         return "the last message must be from the user (assistant prefill is not supported)"
     return None

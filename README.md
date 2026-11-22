@@ -85,7 +85,7 @@ Request IDs: send `X-Request-ID` (letters, digits, `.`, `_`, `-`; up to 64 chara
 
 Edge models without a system role (e.g. Gemma): set `HEI_EDGE_SYSTEM_ROLE=merge` (Terraform: `edge_system_role`) to fold the system prompt into the first user turn for the edge. Claude still gets a real system prompt.
 
-Conversation shape: at most one `system` message, which must come first, and the last message must be from the user (assistant prefill isn't supported). Anything else gets a 422. A large `max_tokens` shrinks the edge answer to fit the edge context window rather than forcing an escalation.
+Conversation shape: at most one `system` message, which must come first, the last message must be from the user (assistant prefill isn't supported), and user and assistant messages can't be empty. Anything else gets a 422. A large `max_tokens` shrinks the edge answer to fit the edge context window rather than forcing an escalation.
 
 Request limits: requests over `max_request_chars` (default 100k) or `max_messages` (default 200) are rejected with 413.
 

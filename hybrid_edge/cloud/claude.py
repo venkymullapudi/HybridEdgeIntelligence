@@ -241,10 +241,14 @@ class ClaudeEscalator:
             "messages": convo,
             "output_config": {"effort": self.s.cloud_effort},
         }
-        if self.s.cloud_prompt_caching:
+        if not system.strip():
+            # The API rejects empty text blocks; no system prompt is the faithful translation.
+            del req["system"]
+        elif self.s.cloud_prompt_caching:
             # The system prompt is the prefix shared across a tenant's escalations: mark
             # its end. (Below the model's minimum cacheable size it silently isn't cached.)
             req["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        if self.s.cloud_prompt_caching:
             if sum(1 for m in convo if m["role"] == "user") > 1:
                 # Multi-turn: the next turn re-sends this history, so let the automatic
                 # breakpoint follow the conversation. Single-turn requests end in a unique
