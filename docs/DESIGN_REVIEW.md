@@ -476,8 +476,8 @@ opposite responses on-call: raise a budget, or wait out an outage.
 
 **Fix:** each failure carries a stable reason, and `/metrics` exports
 `hybrid_edge_cloud_unavailable_total{reason=...}`. The reasons are `budget`,
-`key_budget`, `shadow_budget`, `breaker`, `disabled`, `error`, `deadline`,
-`empty` and `rejected`.
+`key_budget`, `shadow_budget`, `breaker`, `disabled`, `auth`, `error`,
+`deadline`, `empty` and `rejected`.
 
 ## 42. Does coalescing respect each caller's threshold?
 
@@ -616,6 +616,30 @@ of calls threw away everything already paid for.
 * Re-running with the output file as input resumes: labelled records are
   skipped, so only the remainder is billed. A test interrupts a run partway and
   checks that every finished label survives and the resume re-judges nothing.
+
+## 49. Does a bad API key look like a Claude outage?
+
+**Yes.** An empty or wrong Anthropic key secret makes every escalation fail
+with 401/403, and those were counted as `reason="error"`, the same as Claude
+being down. On-call would wait out an "outage" that is really a config mistake.
+
+**Fix:** `AuthenticationError` and `PermissionDeniedError` get their own
+reason, `auth`, in `cloud_unavailable_total`. They still trip the breaker,
+since retrying a bad key won't fix it.
+
+## 50. Does the image that ships actually start?
+
+**Unverified.** CI built the Docker image but never ran it, so a missing
+runtime dependency, a broken entrypoint or a failing `HEALTHCHECK` would have
+shipped green.
+
+**Fix:** CI now starts the built image with the mock edge, then:
+
+* waits for Docker's own `HEALTHCHECK` to report `healthy`;
+* runs one `/v1/infer` request (expecting an edge answer) and one
+  `/v1/infer/stream` request (expecting a `done` event);
+* checks the container runs as the non-root user (uid 10001);
+* dumps the container logs if any step fails.
 
 ## Not changed (and why)
 

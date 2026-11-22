@@ -288,6 +288,11 @@ class ClaudeEscalator:
         except asyncio.TimeoutError as exc:
             self.breaker.failure()
             raise CloudUnavailable(f"cloud deadline of {self.s.cloud_deadline_s}s exceeded", "deadline") from exc
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
+            # A bad or missing key is a config mistake, not an outage: label it so on-call
+            # doesn't wait one out. Still trip the breaker; retrying won't fix it.
+            self.breaker.failure()
+            raise CloudUnavailable(f"cloud rejected credentials: {type(exc).__name__}: {exc}", "auth") from exc
         except anthropic.BadRequestError as exc:
             # A malformed request is our bug, not a cloud outage: don't trip the breaker.
             self.breaker.release()

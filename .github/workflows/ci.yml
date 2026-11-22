@@ -38,3 +38,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker build -f docker/Dockerfile -t hybrid-edge-gateway:ci .
+      # Building isn't enough: start the image and prove it serves, passes its own
+      # HEALTHCHECK, and runs as the non-root user.
+      - name: Smoke-test the image
+        run: |
+          docker run -d --name gw -p 8080:8080 \
+            -e HEI_EDGE_BACKEND=mock -e HEI_CLOUD_PROVIDER=none -e HEI_EMIT_EMF=false \
+            hybrid-edge-gateway:ci
+          for i in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' gw)
+            [ "$status" = healthy ] && break
+            sleep 1
+          done
+          test "$status" = healthy
+          curl -sf localhost:8080/v1/infer -H 'content-type: application/json' \
+            -d '{"prompt":"What is the capital of France?"}' | tee /dev/stderr | grep -q '"source":"edge"'
+          curl -sfN localhost:8080/v1/infer/stream -H 'content-type: application/json' \
+            -d '{"prompt":"hello"}' | grep -q '^event: done'
+          test "$(docker exec gw id -u)" = 10001
+      - name: Container logs
+        if: failure()
+        run: docker logs gw || true
