@@ -723,6 +723,34 @@ edges ran the uncalibrated heuristic indefinitely.
   starting, and ECS's deployment circuit breaker rolls the change back rather
   than serving with it.
 
+## 56. Does "deploy succeeded" mean the new version is running?
+
+**No. `scripts/deploy.sh` had never been tested, and it had three flaws:**
+
+* **Blind replication wait.** It waited a fixed `sleep 60` for cross-region
+  ECR replication. A region the image hadn't reached yet failed to pull, and
+  ECS rolled it back while the script carried on.
+* **Unreviewed infrastructure changes.** Its `terraform apply -auto-approve`
+  applied *every* pending infrastructure change along with the image tag, so
+  an unrelated `tfvars` edit could ship unreviewed under the name "deploy".
+* **No rollout check.** It exited once `apply` returned. A deployment the
+  circuit breaker rolled back is "stable" too, on the old image, so it looked
+  identical to success.
+
+**Fix:**
+
+* The script polls each edge region's ECR until the tag exists, and fails
+  before applying anything if replication times out.
+* `apply` is interactive by default and shows the full plan. `--yes` is the
+  explicit opt-out for CI.
+* After applying, it waits for each service to stabilise, then checks the
+  *running* task definition's image tag. Any region still on the old image
+  fails the deploy, by name.
+* The script now has tests: they run it against stub `terraform`, `aws`,
+  `docker` and `git` commands covering the happy path, slow replication, a
+  replication timeout, interactive versus `--yes` apply, and a rolled-back
+  region.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

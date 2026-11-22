@@ -143,6 +143,8 @@ From the repo root, build the gateway image, push it, and apply everything:
 scripts/deploy.sh v1
 ```
 
+The script waits until the image has replicated to every edge region, then shows the full Terraform plan for review (`--yes` skips the review, for CI). After applying, it checks that each region's ECS service actually runs the new tag, and exits non-zero naming any region the deployment circuit breaker rolled back.
+
 Put the secret values in through the AWS CLI so they never land in Terraform state. Do this for each name in the `secrets_to_populate` output:
 
 ```bash
