@@ -291,6 +291,8 @@ resource "aws_ecs_task_definition" "edge" {
         { name = "HEI_RECORD_FIREHOSE_STREAM", value = aws_kinesis_firehose_delivery_stream.records.name },
         { name = "HEI_RECORD_INCLUDE_TEXT", value = tostring(var.record_include_text) },
         { name = "HEI_EMIT_EMF", value = "true" },
+        # Behind the ALB, which appends the real client address (Global Accelerator preserves it).
+        { name = "HEI_TRUST_FORWARDED_FOR", value = "true" },
         { name = "HEI_CLOUD_DEADLINE_S", value = "90" },
       ]
       secrets          = local.gateway_secrets

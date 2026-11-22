@@ -79,7 +79,7 @@ Each response tells you what happened:
 | `GET /readyz` | readiness: returns 503 when the local model is down, or isn't the configured `edge_model`. ALB and Global Accelerator use it to drain an edge |
 | `GET /metrics` | Prometheus text: requests, escalations, escalation rate, degraded count, cloud-unavailable counts by reason, per-source latency histograms (for p95/p99), cloud tokens and cost. Needs an API key when keys are configured |
 
-Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set. Without configured keys, budgets and cache scope are per client address: the rightmost `X-Forwarded-For` hop, as appended by the ALB. Set `HEI_TRUST_FORWARDED_FOR=false` when there's no load balancer in front.
+Authentication: `x-api-key: <key>` or `Authorization: Bearer <key>`, required when `HEI_API_KEYS` is set. Without configured keys, budgets and cache scope are per client address. That's the connection's address by default. Behind a proxy that appends `X-Forwarded-For` (the AWS ALB; the Terraform deployment sets this), set `HEI_TRUST_FORWARDED_FOR=true` to use the rightmost hop instead. Don't enable it without such a proxy, or clients can forge their identity.
 
 Request IDs: send `X-Request-ID` (letters, digits, `.`, `_`, `-`; up to 64 characters) to correlate a request with gateway logs and escalation records. The gateway echoes it back, or generates one, in the response header and body.
 

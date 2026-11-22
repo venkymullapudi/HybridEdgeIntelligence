@@ -39,3 +39,10 @@ def test_drain_timings_are_ordered():
     stop = int(re.search(r"stopTimeout\s*=\s*(\d+)", ecs).group(1))
     graceful = deadline + 5  # hybrid_edge.server.main
     assert deadline < graceful < dereg < stop
+
+
+def test_alb_deployment_trusts_forwarded_for():
+    """The app defaults to not trusting X-Forwarded-For; the ALB deployment must opt in,
+    or every caller behind the load balancer would share the ALB's address."""
+    ecs = (TF / "modules/edge_region/ecs.tf").read_text()
+    assert '{ name = "HEI_TRUST_FORWARDED_FOR", value = "true" }' in ecs

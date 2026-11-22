@@ -31,6 +31,7 @@ def test_random_keys_do_not_bypass_per_caller_budget_without_api_keys(settings):
 
 
 def test_unauthenticated_identity_uses_alb_appended_hop(settings):
+    settings.trust_forwarded_for = True  # deployed behind the ALB
     c, fake = _client(settings)
     with c:
         # The client forges the left entries; the ALB appends the real address last.
@@ -82,3 +83,14 @@ def test_calibrate_cli_sweep(tmp_path, capsys):
     calibrate_main([str(rec), "-o", str(tmp_path / "c.json"), "--sweep"])
     report = json.loads(capsys.readouterr().out)
     assert len(report["sweep"]) == 21 and report["sweep"][-1]["threshold"] == 1.0
+
+
+def test_forwarded_for_is_ignored_by_default(settings):
+    from hybrid_edge.config import Settings
+    assert Settings.from_dict({}).trust_forwarded_for is False
+    c, fake = _client(settings)
+    with c:
+        a = c.post("/v1/infer", json={"prompt": "hard a", "use_cache": False}, headers={"x-forwarded-for": "1.1.1.1"})
+        b = c.post("/v1/infer", json={"prompt": "hard b", "use_cache": False}, headers={"x-forwarded-for": "2.2.2.2"})
+    # Forged addresses don't mint new budgets: both count as the same direct client.
+    assert a.json()["source"] == "cloud" and b.json()["source"] == "edge"

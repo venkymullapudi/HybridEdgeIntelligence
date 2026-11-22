@@ -138,9 +138,11 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8080
     api_keys: List[str] = field(default_factory=list)
-    # Behind a load balancer that appends X-Forwarded-For (the AWS ALB does). Turn off
-    # when clients connect directly, or they could pick their own identity.
-    trust_forwarded_for: bool = True
+    # Use the rightmost X-Forwarded-For hop as the client identity. Only safe behind a
+    # proxy that appends it (the AWS ALB does; the Terraform deployment turns this on).
+    # Off by default: with direct connections clients could forge it and mint a fresh
+    # per-caller budget per request.
+    trust_forwarded_for: bool = False
     # Request limits (reject with 413): stop oversized prompts from burning memory or
     # escalating straight to Claude because they overflow the edge context.
     max_request_chars: int = 100000

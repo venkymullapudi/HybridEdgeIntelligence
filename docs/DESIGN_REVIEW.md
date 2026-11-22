@@ -687,6 +687,21 @@ or an endless chunked upload, was read into memory before any limit applied.
   request that passes the character limit is never cut off by the byte limit.
   `max_body_bytes` overrides it.
 
+## 54. Is client identity safe by default?
+
+**Only behind the ALB.** `trust_forwarded_for` defaulted to `true`, which is
+correct behind the AWS ALB (it appends the real client address). But it was
+wrong for every other way of running the gateway: docker-compose, a laptop, or
+another platform without such a proxy. There, any client could forge
+`X-Forwarded-For` and pick a new identity per request. That reopened the
+per-caller budget bypass that question 32 closed.
+
+**Fix:** the default is now `false`, because the gateway can't know whether a
+trusted proxy sits in front of it. The Terraform deployment, which does know,
+sets `HEI_TRUST_FORWARDED_FOR=true`. A static test fails if that line is ever
+removed, since without it every caller behind the ALB would share the ALB's
+address and one budget.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
