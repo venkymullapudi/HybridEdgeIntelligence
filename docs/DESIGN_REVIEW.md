@@ -601,6 +601,22 @@ same way, only once they reached Claude.
 
 Regression tests fail on the previous code.
 
+## 48. What happens to judge labels if the run dies?
+
+**They were all lost.** `hybrid-edge-label` kept every verdict in memory and
+wrote the output file only after the last record was judged. Each verdict is a
+billed Claude call, so a crash, a rate-limit storm or a Ctrl-C after thousands
+of calls threw away everything already paid for.
+
+**Fix:**
+
+* The output is written atomically (temp file, then rename) every
+  `--checkpoint-every` labels (default 100).
+* It's written again in a `finally` on success, error or interrupt.
+* Re-running with the output file as input resumes: labelled records are
+  skipped, so only the remainder is billed. A test interrupts a run partway and
+  checks that every finished label survives and the resume re-judges nothing.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

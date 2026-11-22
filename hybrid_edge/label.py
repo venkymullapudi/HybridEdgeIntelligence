@@ -16,8 +16,9 @@ import argparse
 import asyncio
 import html
 import json
+import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import anthropic
 
@@ -86,8 +87,18 @@ def eligible(record: Dict[str, Any]) -> bool:
             and bool(record.get("cloud_answer")) and not record.get("cloud_refused"))
 
 
+def write_records(records: List[Dict[str, Any]], path: str) -> None:
+    """Atomic write: a crash mid-write never leaves a truncated labels file."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for r in records:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+
+
 async def run(records: List[Dict[str, Any]], settings: Settings, client: Any, concurrency: int,
-              limit: Optional[int]) -> Dict[str, int]:
+              limit: Optional[int], checkpoint: Optional[Callable[[], None]] = None,
+              checkpoint_every: int = 100) -> Dict[str, int]:
     sem = asyncio.Semaphore(concurrency)
     todo = [r for r in records if eligible(r)]
     if limit is not None:
@@ -107,6 +118,8 @@ async def run(records: List[Dict[str, Any]], settings: Settings, client: Any, co
             else:
                 r.update(out)
                 stats["judged"] += 1
+                if checkpoint is not None and stats["judged"] % checkpoint_every == 0:
+                    checkpoint()  # every verdict is a billed call: don't hold them all in memory
 
     await asyncio.gather(*(one(r) for r in todo))
     return stats
@@ -118,6 +131,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("-o", "--output", required=True)
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--limit", type=int, default=None, help="max records to judge (cost cap)")
+    ap.add_argument("--checkpoint-every", type=int, default=100,
+                    help="write the output after this many new labels (re-run on the output to resume)")
     args = ap.parse_args(argv)
 
     settings = Settings.load()
@@ -126,17 +141,22 @@ def main(argv: Optional[List[str]] = None) -> None:
     with open(args.records, "r", encoding="utf-8") as fh:
         records = [json.loads(line) for line in fh if line.strip()]
 
+    def checkpoint() -> None:
+        write_records(records, args.output)
+
     async def go() -> Dict[str, int]:
         client = build_claude_client(settings)
         try:
-            return await run(records, settings, client, args.concurrency, args.limit)
+            return await run(records, settings, client, args.concurrency, args.limit,
+                             checkpoint, args.checkpoint_every)
         finally:
             await client.close()
 
-    stats = asyncio.run(go())
-    with open(args.output, "w", encoding="utf-8") as fh:
-        for r in records:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    try:
+        stats = asyncio.run(go())
+    finally:
+        # Crash, Ctrl-C or success: keep every label already paid for.
+        checkpoint()
     labelled = sum(1 for r in records if r.get("label") is not None)
     print(json.dumps({**stats, "total_records": len(records), "labelled_records": labelled}, indent=2))
 

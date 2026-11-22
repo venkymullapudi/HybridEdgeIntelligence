@@ -180,6 +180,8 @@ Choosing τ trades **escalation rate** (cost) against **edge precision** (qualit
    hybrid-edge-label records.jsonl -o labelled.jsonl --limit 5000
    ```
 
+   Progress is checkpointed (`--checkpoint-every`, default 100) and saved if the run is interrupted. To resume without re-paying for finished labels, re-run with the output file as input.
+
    As a crude fallback, `hybrid-edge-calibrate --weak-labels` labels by lexical overlap instead.
    Shadow records carry `sample_weight = 1/shadow_rate`, and the calibrator uses it, so its precision and coverage numbers describe real traffic rather than the sample.
 3. Fit the calibrator:
