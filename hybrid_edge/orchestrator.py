@@ -165,6 +165,12 @@ class HybridOrchestrator:
         return await self._infer(messages, route, threshold, max_tokens, caller, key, t0, policy_notes, rid,
                                  on_event)
 
+    def _unavailable(self, t0: float, detail: str) -> ServiceUnavailable:
+        """Count a request neither tier could answer. Without this, a total outage, the
+        worst failure, recorded no requests at all, so rate alarms read zero."""
+        self.metrics.observe("unavailable", False, True, None, (time.perf_counter() - t0) * 1000)
+        return ServiceUnavailable(detail)
+
     @staticmethod
     def _meets(res: InferenceResult, threshold: float) -> bool:
         """Can this caller (with its threshold) be given a result computed for another?"""
@@ -218,7 +224,7 @@ class HybridOrchestrator:
                 self.metrics.incr("edge_errors_total")
                 reasons.append(f"edge error: {exc}")
                 if route == "edge":
-                    raise ServiceUnavailable(str(exc)) from exc
+                    raise self._unavailable(t0, str(exc)) from exc
 
         must_escalate = skip_edge or primary is None or (decision is not None and decision.escalate)
         if route == "edge":
@@ -262,7 +268,7 @@ class HybridOrchestrator:
             self.metrics.incr("cloud_errors_total")
             self.metrics.incr_labeled("cloud_unavailable_total", "reason", exc.reason)
             if primary is None:
-                raise ServiceUnavailable("; ".join(reasons)) from exc
+                raise self._unavailable(t0, "; ".join(reasons)) from exc
             result = self._result(rid, t0, primary.text, "edge", True, True, decision, threshold, reasons,
                                   signals, edge_latency, None, self.s.edge_model, self._edge_usage(primary))
             self._after(result, messages, primary, None, key, caller, cacheable=False)

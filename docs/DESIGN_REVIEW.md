@@ -934,6 +934,32 @@ with mutated responses (offline, through a mock transport) found two problems.
   end-to-end that a garbage edge response escalates to Claude. After the fix,
   4,800 fuzzed responses raised no unhandled exceptions.
 
+## 64. Do the concurrency paths hold up together, and is a total outage visible?
+
+Fuzzing so far sent one request at a time, so I added a seeded stress test.
+It fires overlapping requests that mix single-flight, the cache, streaming,
+shadow calls, random cancellations and a cloud that fails 20% of the time,
+and checks these invariants:
+
+* no unexpected exceptions;
+* every edge answer honours its own caller's threshold;
+* request IDs survive coalescing and caching;
+* in-flight and background state is empty afterwards;
+* the metrics' request count matches the requests that completed.
+
+The concurrency invariants held across 1,800 requests. The last one did not:
+**requests that ended in a 503 (neither tier could answer) were never
+recorded in metrics.** A total outage, the worst failure mode, made `Requests`
+and `Degraded` *drop*. The alarms compute `Degraded / Requests` and fire only
+above 20 requests, so during a full outage they read zero and stayed silent.
+I confirmed it directly: 50 requests, all 503, were recorded as 0 requests
+and 0 degraded.
+
+**Fix:** every path that returns 503 records the request (source
+`unavailable`, `degraded = true`) in `/metrics` and EMF, so both alarm inputs
+include it. `tests/test_concurrency.py` keeps the stress run (450 requests
+per CI run) and a targeted outage check. Both fail on the previous code.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
