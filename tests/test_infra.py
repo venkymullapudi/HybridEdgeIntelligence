@@ -46,3 +46,28 @@ def test_alb_deployment_trusts_forwarded_for():
     or every caller behind the load balancer would share the ALB's address."""
     ecs = (TF / "modules/edge_region/ecs.tf").read_text()
     assert '{ name = "HEI_TRUST_FORWARDED_FOR", value = "true" }' in ecs
+
+
+def test_tasks_cannot_reach_instance_metadata():
+    """Containers must not borrow the GPU node's role via IMDS."""
+    ecs = (TF / "modules/edge_region/ecs.tf").read_text()
+    assert "ECS_AWSVPC_BLOCK_IMDS=true" in ecs
+    assert re.search(r"http_put_response_hop_limit\s*=\s*1\b", ecs)
+    assert re.search(r'http_tokens\s*=\s*"required"', ecs)  # IMDSv2 only
+
+
+def test_ecs_exec_is_opt_in_and_works_when_enabled():
+    ecs = (TF / "modules/edge_region/ecs.tf").read_text()
+    assert "enable_execute_command = var.enable_execute_command" in ecs
+    assert re.search(r'variable "enable_execute_command" \{[^}]*default\s*=\s*false',
+                     (TF / "variables.tf").read_text(), re.S)
+    assert "var.enable_execute_command ? [{" in ecs and "ssmmessages:OpenDataChannel" in ecs
+
+
+def test_every_records_bucket_requires_tls():
+    buckets = list(blocks("aws_s3_bucket"))
+    policies = list(blocks("aws_s3_bucket_policy"))
+    assert {f for f, n, _ in buckets if n == "records"} == {"main.tf", "telemetry.tf"}
+    for f, _, _ in [b for b in buckets if b[1] == "records"]:
+        tls = [body for pf, n, body in policies if pf == f and n == "records_tls_only"]
+        assert tls and '"aws:SecureTransport" = "false"' in tls[0], f"{f}: records bucket allows plain HTTP"

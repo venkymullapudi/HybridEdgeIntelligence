@@ -56,6 +56,7 @@ module "edge_us_east_1" {
   certificate_arn                 = lookup(var.certificate_arns, "us-east-1", "")
   cloud_aws_region                = lookup(var.bedrock_region_overrides, "us-east-1", "")
   alarm_emails                    = var.alarm_emails
+  enable_execute_command          = var.enable_execute_command
   vpc_cidr                        = "10.40.0.0/16"
 }
 
@@ -90,6 +91,7 @@ module "edge_eu_west_1" {
   certificate_arn                 = lookup(var.certificate_arns, "eu-west-1", "")
   cloud_aws_region                = lookup(var.bedrock_region_overrides, "eu-west-1", "")
   alarm_emails                    = var.alarm_emails
+  enable_execute_command          = var.enable_execute_command
   vpc_cidr                        = "10.41.0.0/16"
 }
 
@@ -124,6 +126,7 @@ module "edge_ap_south_1" {
   certificate_arn                 = lookup(var.certificate_arns, "ap-south-1", "")
   cloud_aws_region                = lookup(var.bedrock_region_overrides, "ap-south-1", "")
   alarm_emails                    = var.alarm_emails
+  enable_execute_command          = var.enable_execute_command
   vpc_cidr                        = "10.42.0.0/16"
 }
 
@@ -158,6 +161,7 @@ module "edge_ap_southeast_1" {
   certificate_arn                 = lookup(var.certificate_arns, "ap-southeast-1", "")
   cloud_aws_region                = lookup(var.bedrock_region_overrides, "ap-southeast-1", "")
   alarm_emails                    = var.alarm_emails
+  enable_execute_command          = var.enable_execute_command
   vpc_cidr                        = "10.43.0.0/16"
 }
 

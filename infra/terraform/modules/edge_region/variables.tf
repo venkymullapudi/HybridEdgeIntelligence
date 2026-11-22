@@ -170,3 +170,9 @@ variable "gate_calibration_s3_uri" {
   type    = string
   default = ""
 }
+
+variable "enable_execute_command" {
+  description = "Allow ECS Exec into edge containers (they hold the Anthropic key). Grants the task role the SSM channel permissions it needs."
+  type        = bool
+  default     = false
+}

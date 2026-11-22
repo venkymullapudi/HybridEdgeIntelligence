@@ -15,6 +15,24 @@ resource "aws_s3_bucket_public_access_block" "records" {
   restrict_public_buckets = true
 }
 
+# Records hold prompts and answers: refuse any access without TLS.
+resource "aws_s3_bucket_policy" "records_tls_only" {
+  count  = length(aws_s3_bucket.records)
+  bucket = aws_s3_bucket.records[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [aws_s3_bucket.records[0].arn, "${aws_s3_bucket.records[0].arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+  depends_on = [aws_s3_bucket_public_access_block.records]
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "records" {
   count  = length(aws_s3_bucket.records)
   bucket = aws_s3_bucket.records[0].id

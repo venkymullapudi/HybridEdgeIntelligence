@@ -180,3 +180,9 @@ variable "gate_calibration_s3_uri" {
     error_message = "gate_calibration_s3_uri must look like s3://bucket/key."
   }
 }
+
+variable "enable_execute_command" {
+  description = "Allow ECS Exec into edge containers for debugging. Off by default: anyone with ecs:ExecuteCommand would get a shell next to the Anthropic key."
+  type        = bool
+  default     = false
+}

@@ -751,6 +751,32 @@ edges ran the uncalibrated heuristic indefinitely.
   replication timeout, interactive versus `--yes` apply, and a rolled-back
   region.
 
+## 57. What can a compromised container reach?
+
+**Too much.** Three gaps in the infrastructure:
+
+* **Node credentials through IMDS.** With `awsvpc` tasks and an IMDS hop limit
+  of 2, any process in the vLLM or gateway container could query instance
+  metadata and take the **GPU node's** EC2 role (ECS agent and SSM
+  permissions, broader than the task role). A model-server bug or a malicious
+  dependency would get more than the task was ever granted.
+* **Always-on ECS Exec.** `enable_execute_command = true` was hard-coded. Anyone
+  with `ecs:ExecuteCommand` could open a shell next to the Anthropic key. It
+  also didn't work: the task role lacked the `ssmmessages` permissions Exec
+  needs.
+* **Plain-HTTP bucket access.** The records buckets, which hold prompts and
+  answers, accepted requests without TLS.
+
+**Fix:**
+
+* `ECS_AWSVPC_BLOCK_IMDS=true` on the container instances, IMDS hop limit 1,
+  and IMDSv2 required. Tasks only have their own task role.
+* ECS Exec is opt-in (`enable_execute_command`, default `false`). Turning it on
+  also grants the task role the SSM channel permissions, so it actually works.
+* Every records bucket, central or regional, has a policy denying any request
+  where `aws:SecureTransport` is `false`.
+* Static tests guard all three.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

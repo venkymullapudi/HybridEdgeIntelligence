@@ -54,8 +54,9 @@ resource "aws_launch_template" "gpu" {
   vpc_security_group_ids = [aws_security_group.node.id]
 
   metadata_options {
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
+    http_tokens = "required"
+    # 1 hop: only the host (and the host-networked ECS agent) reaches IMDS.
+    http_put_response_hop_limit = 1
   }
 
   block_device_mappings {
@@ -73,6 +74,7 @@ resource "aws_launch_template" "gpu" {
     ECS_CLUSTER=${aws_ecs_cluster.this.name}
     ECS_ENABLE_GPU_SUPPORT=true
     ECS_ENABLE_TASK_IAM_ROLE=true
+    ECS_AWSVPC_BLOCK_IMDS=true
     ECS_ENABLE_AWSLOGS_EXECUTIONROLE_OVERRIDE=true
     ECS_CONTAINER_START_TIMEOUT=15m
     ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
@@ -183,6 +185,12 @@ resource "aws_iam_role_policy" "task" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = concat(
+      # ECS Exec needs these channels on the task role; without them it can't work at all.
+      var.enable_execute_command ? [{
+        Effect   = "Allow"
+        Action   = ["ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel"]
+        Resource = ["*"]
+      }] : [],
       [{
         Effect   = "Allow"
         Action   = ["firehose:PutRecord", "firehose:PutRecordBatch"]
@@ -316,7 +324,8 @@ resource "aws_ecs_service" "edge" {
   task_definition                   = aws_ecs_task_definition.edge.arn
   desired_count                     = var.desired_tasks
   health_check_grace_period_seconds = 900 # first boot downloads model weights
-  enable_execute_command            = true
+  # ECS Exec opens a shell in a container that holds the Anthropic key: opt-in only.
+  enable_execute_command = var.enable_execute_command
 
   capacity_provider_strategy {
     capacity_provider = aws_ecs_capacity_provider.gpu.name
