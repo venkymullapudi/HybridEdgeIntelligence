@@ -8,6 +8,7 @@ speaks HTTP to it.
 from __future__ import annotations
 
 import json
+import math
 import time
 from typing import Any, Dict, List, Optional
 
@@ -57,7 +58,11 @@ class OpenAICompatBackend:
         latency_ms = (time.perf_counter() - t0) * 1000
         if resp.status_code != 200:
             raise EdgeBackendError(f"edge model HTTP {resp.status_code}: {resp.text[:300]}")
-        return parse_chat_completion(resp.json(), latency_ms)
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise MalformedResponse(f"edge response is not JSON: {exc}") from exc
+        return parse_chat_completion(payload, latency_ms)
 
     async def generate_stream(
         self,
@@ -113,6 +118,38 @@ class OpenAICompatBackend:
         await self._client.aclose()
 
 
+class MalformedResponse(EdgeBackendError):
+    """The edge server answered, but not in the shape (or with the values) we need."""
+
+
+def _logprob(v: Any) -> float:
+    lp = float(v)
+    if not math.isfinite(lp):
+        raise MalformedResponse(f"non-finite logprob {v!r}")
+    return min(lp, 0.0)  # a log-probability can't exceed 0; tiny positives are float noise
+
+
+def _token(item: Any) -> TokenInfo:
+    if not isinstance(item, dict):
+        raise MalformedResponse("logprob entry is not an object")
+    top: Dict[str, float] = {}
+    for t in item.get("top_logprobs") or []:
+        if not isinstance(t, dict):
+            raise MalformedResponse("top_logprobs entry is not an object")
+        top[str(t.get("token", ""))] = _logprob(t.get("logprob", 0.0))
+    return TokenInfo(token=str(item.get("token", "")), logprob=_logprob(item.get("logprob", 0.0)), top=top)
+
+
+def _logprob_items(choice: Dict[str, Any]) -> List[Any]:
+    lp = choice.get("logprobs") or {}
+    if not isinstance(lp, dict):
+        raise MalformedResponse("logprobs is not an object")
+    items = lp.get("content") or []
+    if not isinstance(items, list):
+        raise MalformedResponse("logprobs.content is not a list")
+    return items
+
+
 class StreamAccumulator:
     """Builds a Generation from OpenAI-style SSE chunks."""
 
@@ -125,7 +162,7 @@ class StreamAccumulator:
         self.new_tokens = False
 
     def feed_sse_line(self, line: str) -> bool:
-        """Consume one SSE line. Returns True at end of stream."""
+        """Consume one SSE line. Returns True at end of stream. Raises MalformedResponse."""
         self.new_tokens = False
         line = line.strip()
         if not line.startswith("data:"):
@@ -133,21 +170,35 @@ class StreamAccumulator:
         data = line[5:].strip()
         if data == "[DONE]":
             return True
-        chunk = json.loads(data)
-        usage = chunk.get("usage") or {}
-        if usage:
-            self.prompt_tokens = int(usage.get("prompt_tokens", 0))
-            self.completion_tokens = int(usage.get("completion_tokens", 0))
-        for choice in chunk.get("choices") or []:
-            delta = choice.get("delta") or {}
-            if delta.get("content"):
-                self.text.append(delta["content"])
-            for item in ((choice.get("logprobs") or {}).get("content") or []):
-                top = {t["token"]: float(t["logprob"]) for t in (item.get("top_logprobs") or [])}
-                self.tokens.append(TokenInfo(token=item.get("token", ""), logprob=float(item.get("logprob", 0.0)), top=top))
-                self.new_tokens = True
-            if choice.get("finish_reason"):
-                self.finish_reason = choice["finish_reason"]
+        try:
+            chunk = json.loads(data)
+            if not isinstance(chunk, dict):
+                raise MalformedResponse("stream chunk is not an object")
+            usage = chunk.get("usage") or {}
+            if isinstance(usage, dict) and usage:
+                self.prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                self.completion_tokens = int(usage.get("completion_tokens") or 0)
+            choices = chunk.get("choices") or []
+            if not isinstance(choices, list):
+                raise MalformedResponse("choices is not a list")
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    raise MalformedResponse("choice is not an object")
+                delta = choice.get("delta") or {}
+                if not isinstance(delta, dict):
+                    raise MalformedResponse("delta is not an object")
+                content = delta.get("content")
+                if content:
+                    self.text.append(str(content))
+                for item in _logprob_items(choice):
+                    self.tokens.append(_token(item))
+                    self.new_tokens = True
+                if choice.get("finish_reason"):
+                    self.finish_reason = str(choice["finish_reason"])
+        except MalformedResponse:
+            raise
+        except (ValueError, TypeError, AttributeError, KeyError, OverflowError) as exc:
+            raise MalformedResponse(f"malformed stream chunk: {exc}") from exc
         return False
 
     def result(self, latency_ms: float) -> Generation:
@@ -161,26 +212,40 @@ class StreamAccumulator:
         )
 
 
-def parse_chat_completion(payload: Dict[str, Any], latency_ms: float = 0.0) -> List[Generation]:
-    usage = payload.get("usage") or {}
-    gens: List[Generation] = []
-    for choice in payload.get("choices", []):
-        content = ((choice.get("message") or {}).get("content")) or ""
-        tokens: List[TokenInfo] = []
-        lp = choice.get("logprobs") or {}
-        for item in lp.get("content") or []:
-            top = {t["token"]: float(t["logprob"]) for t in (item.get("top_logprobs") or [])}
-            tokens.append(TokenInfo(token=item.get("token", ""), logprob=float(item.get("logprob", 0.0)), top=top))
-        gens.append(
-            Generation(
-                text=content,
-                tokens=tokens,
-                finish_reason=choice.get("finish_reason") or "stop",
-                prompt_tokens=int(usage.get("prompt_tokens", 0)),
-                completion_tokens=int(usage.get("completion_tokens", len(tokens))),
-                latency_ms=latency_ms,
+def parse_chat_completion(payload: Any, latency_ms: float = 0.0) -> List[Generation]:
+    """Parse a non-streaming response. Any unexpected shape or value is a MalformedResponse,
+    so the request escalates instead of crashing (or scoring garbage as confidence)."""
+    try:
+        if not isinstance(payload, dict):
+            raise MalformedResponse("response is not an object")
+        usage = payload.get("usage") or {}
+        if not isinstance(usage, dict):
+            raise MalformedResponse("usage is not an object")
+        choices = payload.get("choices", [])
+        if not isinstance(choices, list):
+            raise MalformedResponse("choices is not a list")
+        gens: List[Generation] = []
+        for choice in choices:
+            if not isinstance(choice, dict):
+                raise MalformedResponse("choice is not an object")
+            message = choice.get("message") or {}
+            if not isinstance(message, dict):
+                raise MalformedResponse("message is not an object")
+            tokens = [_token(item) for item in _logprob_items(choice)]
+            gens.append(
+                Generation(
+                    text=str(message.get("content") or ""),
+                    tokens=tokens,
+                    finish_reason=str(choice.get("finish_reason") or "stop"),
+                    prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                    completion_tokens=int(usage.get("completion_tokens") or len(tokens)),
+                    latency_ms=latency_ms,
+                )
             )
-        )
+    except MalformedResponse:
+        raise
+    except (ValueError, TypeError, AttributeError, KeyError, OverflowError) as exc:
+        raise MalformedResponse(f"malformed edge response: {exc}") from exc
     if not gens:
         raise EdgeBackendError("edge model returned no choices")
     return gens

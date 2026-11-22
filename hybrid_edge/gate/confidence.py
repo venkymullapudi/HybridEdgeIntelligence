@@ -64,6 +64,12 @@ class ConfidenceGate:
         self.threshold = calibrator.threshold if (calibrator and calibrator.threshold is not None) else threshold
 
     def score(self, s: Signals) -> float:
+        score = self._raw_score(s)
+        # Fail safe: NaN would compare False against the threshold and min()/max() would
+        # clamp it to full confidence, serving garbage from the edge.
+        return score if math.isfinite(score) else 0.0
+
+    def _raw_score(self, s: Signals) -> float:
         if self.calibrator is not None:
             return self.calibrator.predict(s.vector())
         parts = [
@@ -79,6 +85,8 @@ class ConfidenceGate:
             score -= self.hedge_penalty
         if s.truncated:
             score -= self.truncation_penalty
+        if not math.isfinite(score):
+            return 0.0  # check before clamping: min(1.0, nan) is 1.0
         return max(0.0, min(1.0, score))
 
     def decide(self, s: Signals, threshold: Optional[float] = None) -> GateDecision:

@@ -903,6 +903,37 @@ sensitive client content back out.
   endpoints on every CI run, failing on any 5xx or streamed 500. It fails on
   the previous code.
 
+## 63. What does a malformed response from the edge server do?
+
+The edge server's output is untrusted input too. A vLLM upgrade, a different
+OpenAI-compatible server, or a proxy can change its shape. Fuzzing the backend
+with mutated responses (offline, through a mock transport) found two problems.
+
+* **Crashes:** **355 of 800** malformed responses raised unhandled
+  `AttributeError` or `TypeError` (`"choices": 3`, `"choices": [null]`,
+  `"usage": "x"`, non-object stream chunks), so the user got a 500 instead of
+  an escalation.
+* **Garbage scored as certainty.** Numeric fields weren't validated. A `NaN`
+  logprob flowed into the signals, and the gate clamp `max(0, min(1, score))`
+  turned `NaN` into **1.0**, because `min(1.0, nan)` is `1.0` in Python. A
+  malformed answer was served from the edge as if it were fully confident.
+
+**Fix:**
+
+* **Strict parsing at the backend boundary.** Every object, list and number is
+  type-checked. Any unexpected shape, non-JSON body, overflow or other parse
+  error raises `MalformedResponse`, a subclass of `EdgeBackendError`, so the
+  request escalates as for any other edge failure. Logprobs must be finite.
+  Tiny positive values (float noise) are clamped to 0.
+* **Fail-safe gate.** A non-finite score is 0, checked *before* the clamp, on
+  both the heuristic and calibrated paths. Any future `NaN` escalates instead
+  of passing. The first version of this fix put the check after the clamp, and
+  the new test caught it.
+* **Tests:** `tests/test_edge_fuzz.py` runs 1,800 mutated responses (streaming
+  and non-streaming) per CI run, names specific malformations, and checks
+  end-to-end that a garbage edge response escalates to Claude. After the fix,
+  4,800 fuzzed responses raised no unhandled exceptions.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
