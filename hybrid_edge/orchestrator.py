@@ -216,7 +216,11 @@ class HybridOrchestrator:
         # ---- edge -----------------------------------------------------------
         if not skip_edge:
             try:
-                primary, signals, decision = await self._edge(messages, edge_max_tokens, threshold, route, caller)
+                # The client chose this length (and we didn't shrink it): stopping there is
+                # what they asked for, not a sign of a cut-off answer.
+                client_capped = max_tokens is not None and edge_max_tokens == max_tokens
+                primary, signals, decision = await self._edge(messages, edge_max_tokens, threshold, route, caller,
+                                                              client_capped)
                 edge_latency = primary.latency_ms
                 reasons.extend(decision.reasons)
             except EdgeBackendError as exc:
@@ -296,7 +300,8 @@ class HybridOrchestrator:
                     cacheable=not cloud.refused and cloud.stop_reason != "max_tokens")
         return result
 
-    async def _edge(self, messages, max_tokens, threshold, route, caller) -> Tuple[Generation, Signals, GateDecision]:
+    async def _edge(self, messages, max_tokens, threshold, route, caller,
+                    client_capped: bool = False) -> Tuple[Generation, Signals, GateDecision]:
         messages = edge_messages(messages, self.s.edge_system_role)
         mt = max_tokens
         # Only abort early when the answer can actually be escalated; otherwise a
@@ -325,7 +330,7 @@ class HybridOrchestrator:
         if primary.finish_reason == "aborted":
             self.metrics.incr("edge_aborted_total")
 
-        signals = compute_signals(primary, [], self.s.gate_min_window)
+        signals = self._signals(primary, [], client_capped)
         if not signals.has_logprobs and primary.completion_tokens > 0:
             # Without logprobs every answer scores a neutral 0.5 and escalates: a silent
             # cost explosion. Count it so the alarm (and /metrics) can catch it.
@@ -343,12 +348,18 @@ class HybridOrchestrator:
                 samples = await self.backend.generate(
                     messages, max_tokens=mt, temperature=self.s.gate_consistency_temperature, n=k,
                     top_logprobs=self.s.edge_top_logprobs)
-                signals = compute_signals(primary, samples, self.s.gate_min_window)
+                signals = self._signals(primary, samples, client_capped)
                 decision = self.gate.decide(signals, threshold)
                 self.metrics.incr("consistency_sampled_total")
             except EdgeBackendError as exc:
                 log.warning("consistency sampling failed: %s", exc)
         return primary, signals, decision
+
+    def _signals(self, primary: Generation, samples, client_capped: bool) -> Signals:
+        signals = compute_signals(primary, samples, self.s.gate_min_window)
+        if client_capped and signals.truncated:
+            signals.truncated = False  # no truncation penalty for a length the client set
+        return signals
 
     def _abort_check(self):
         prob = self.s.gate_abort_window_prob

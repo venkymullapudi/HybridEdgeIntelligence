@@ -1030,6 +1030,27 @@ the whole budget, question 29's empty-answer handling degrades to the edge
 answer. Shadow calls keep the full cap, since they produce reference answers
 for the judge.
 
+## 68. Is an answer the client asked to keep short "truncated"?
+
+**The gate said yes.** It treats `finish_reason: length` as a cut-off,
+low-quality answer and subtracts a truncation penalty (0.15). But when the
+client set `max_tokens`, stopping at that length is exactly what they asked
+for. In a probe, an easy, confident answer dropped from 0.94 to 0.79 at
+`max_tokens: 4`. Anything moderately confident (0.70–0.85) was pushed under
+the threshold, so clients that ask for short answers set off an escalation
+storm, paying Claude to replace answers that were fine.
+
+**Fix:** the penalty applies only when *we* cut the answer short: the
+operator's `edge_max_tokens` default, or the context-window clamp from
+question 27. When the edge stops at the client's own, unclamped `max_tokens`,
+the answer isn't marked truncated. Records store the corrected signal, so
+calibration data matches what the gate saw.
+
+**Correction to question 67:** passing `max_tokens` through bounds Claude's
+*total* tokens, thinking plus answer, at `max_tokens + headroom`. That bounds
+the cost, but Claude's answer itself can be longer than `max_tokens`. The
+README now says so.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
