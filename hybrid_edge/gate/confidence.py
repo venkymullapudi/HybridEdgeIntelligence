@@ -21,6 +21,8 @@ class Calibrator:
     # The edge model whose signals this was fit on. Logprob scales differ between
     # models, so a calibration must never silently outlive a model swap.
     edge_model: Optional[str] = None
+    # The settings the features were computed under (Settings.signal_config()).
+    signal_config: Optional[Dict[str, Any]] = None
 
     def predict(self, features: Dict[str, float]) -> float:
         z = self.bias + sum(w * features.get(k, 0.0) for k, w in self.weights.items())
@@ -31,12 +33,12 @@ class Calibrator:
         """Load from a local path or an ``s3://bucket/key`` URI (how deployed edges get it)."""
         raw = json.loads(read_text(path, s3_client))
         return cls(weights=raw["weights"], bias=float(raw["bias"]), threshold=raw.get("threshold"),
-                   edge_model=raw.get("edge_model"))
+                   edge_model=raw.get("edge_model"), signal_config=raw.get("signal_config"))
 
     def dump(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump({"weights": self.weights, "bias": self.bias, "threshold": self.threshold,
-                       "edge_model": self.edge_model}, fh, indent=2)
+                       "edge_model": self.edge_model, "signal_config": self.signal_config}, fh, indent=2)
 
 
 @dataclass

@@ -441,6 +441,7 @@ class HybridOrchestrator:
             "edge_id": self.s.edge_id,
             "caller": caller,
             "edge_model": self.s.edge_model,
+            "signal_config": self.s.signal_config(),
             "cloud_model": cloud.model if cloud else None,
             "escalated": result.escalated,
             "shadow": shadow,

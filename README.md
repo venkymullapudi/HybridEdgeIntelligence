@@ -201,7 +201,7 @@ Choosing τ trades **escalation rate** (cost) against **edge precision** (qualit
    ```
    {"rows": 5000, "threshold": 0.62, "edge_coverage": 0.78, "edge_precision": 0.951, "escalation_rate": 0.22}
    ```
-4. Ship it. Upload `calibration.json` to S3 under a new key per version, and set Terraform's `gate_calibration_s3_uri` (e.g. `s3://my-bucket/gate/calibration-v3.json`). Edges load it at startup, with read access to only that object. Locally, `HEI_GATE_CALIBRATION_PATH` takes a file path or the same `s3://` URI. The calibration's threshold replaces `gate_threshold`. The file records the edge model it was fit on, and the gateway refuses to start with a different `edge_model`, so recalibrate after every model change. If your records mix models, pass `--edge-model` to `hybrid-edge-calibrate`.
+4. Ship it. Upload `calibration.json` to S3 under a new key per version, and set Terraform's `gate_calibration_s3_uri` (e.g. `s3://my-bucket/gate/calibration-v3.json`). Edges load it at startup, with read access to only that object. Locally, `HEI_GATE_CALIBRATION_PATH` takes a file path or the same `s3://` URI. The calibration's threshold replaces `gate_threshold`. The file records the edge model and the gate settings it was fit under (`edge_top_logprobs`, `gate_min_window`, temperatures). The gateway refuses to start if either has changed, so recalibrate after changing any of them. If your records mix models, pass `--edge-model` to `hybrid-edge-calibrate`.
 
 The same records double as a distillation set: fine-tune the edge model on `(messages, cloud_answer)` pairs, redeploy it, and recalibrate.
 

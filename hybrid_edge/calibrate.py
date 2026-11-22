@@ -45,6 +45,17 @@ def edge_models(paths: Union[str, Sequence[str]]) -> Dict[Optional[str], int]:
     return counts
 
 
+def signal_configs(paths: Union[str, Sequence[str]], edge_model: Optional[str]) -> Dict[str, int]:
+    """Distinct gate-setting fingerprints among labelled-or-labellable records."""
+    counts: Dict[str, int] = {}
+    for r in iter_records(_paths(paths)):
+        if edge_model is not None and r.get("edge_model") != edge_model:
+            continue
+        key = json.dumps(r.get("signal_config"), sort_keys=True)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def load(paths: Union[str, Sequence[str]], weak_labels: bool, weak_threshold: float,
          edge_model: Optional[str] = None, stats: Optional[ReadStats] = None) -> List[Row]:
     """Rows carry ``sample_weight`` so shadow records (sampled at ``shadow_rate``)
@@ -134,6 +145,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--weak-threshold", type=float, default=0.5)
     ap.add_argument("--sweep", action="store_true",
                     help="also print coverage/precision at each threshold, to choose --target-precision")
+    ap.add_argument("--any-signal-config", action="store_true",
+                    help="fit across records produced under different gate settings (not recommended)")
     ap.add_argument("--edge-model", default=None,
                     help="fit only on records from this edge model (required if records mix models)")
     args = ap.parse_args(argv)
@@ -145,6 +158,13 @@ def main(argv: Optional[List[str]] = None) -> None:
             raise SystemExit(f"records mix edge models {sorted(map(str, models))}; pick one with --edge-model")
         edge_model = next(iter(models), None)
 
+    configs = signal_configs(args.records, edge_model)
+    if len(configs) > 1 and not args.any_signal_config:
+        raise SystemExit("records were produced under different gate settings (edge_top_logprobs, "
+                         "gate_min_window, temperatures, ...): " + "; ".join(sorted(configs))
+                         + ". Calibrate each set separately, or pass --any-signal-config.")
+    signal_config = json.loads(next(iter(configs))) if len(configs) == 1 else None
+
     stats = ReadStats()
     rows = load(args.records, args.weak_labels, args.weak_threshold, edge_model, stats)
     stats.report()
@@ -154,6 +174,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     thr, stats = choose_threshold(cal, rows, args.target_precision)
     cal.threshold = round(thr, 4)
     cal.edge_model = edge_model
+    cal.signal_config = signal_config
     cal.dump(args.output)
     ll = -sum(y * math.log(max(cal.predict(x), 1e-9)) + (1 - y) * math.log(max(1 - cal.predict(x), 1e-9))
               for x, y, _ in rows) / len(rows)

@@ -81,9 +81,17 @@ def client_ip(request: Request, trust_forwarded_for: bool) -> str:
 
 def build_orchestrator(settings: Settings, backend=None, escalator=None, records=None) -> HybridOrchestrator:
     calibrator = Calibrator.load(settings.gate_calibration_path) if settings.gate_calibration_path else None
+    msg = None
     if calibrator is not None and calibrator.edge_model != settings.edge_model:
         msg = (f"calibration {settings.gate_calibration_path} was fit on edge model "
                f"{calibrator.edge_model!r}, but the edge model is {settings.edge_model!r}")
+    elif calibrator is not None and calibrator.signal_config is not None \
+            and calibrator.signal_config != settings.signal_config():
+        changed = sorted(k for k in set(calibrator.signal_config) | set(settings.signal_config())
+                         if calibrator.signal_config.get(k) != settings.signal_config().get(k))
+        msg = (f"calibration {settings.gate_calibration_path} was fit with different gate settings "
+               f"({', '.join(f'{k}: {calibrator.signal_config.get(k)!r} -> {settings.signal_config().get(k)!r}' for k in changed)})")
+    if msg:
         if not settings.gate_allow_calibration_mismatch:
             # Fail fast: ECS's deployment circuit breaker rolls back instead of serving
             # with a threshold that means nothing for this model.

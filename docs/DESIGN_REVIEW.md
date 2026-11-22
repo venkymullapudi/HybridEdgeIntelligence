@@ -984,6 +984,33 @@ and killed the whole run, which for the judge meant a run already paid for.
 Tests build a mock Firehose tree (gzip objects with no suffix, nested date
 partitions) and run both CLIs on it end to end.
 
+## 66. Does a calibration survive a gate-setting change on the same model?
+
+**It shouldn't, but it did.** Question 21 bound a calibration to its edge
+model. The gate's features also depend on gate settings:
+
+* `edge_top_logprobs`: `entropy_conf` is normalised by the number of
+  alternatives, so going from top-5 to top-10 changes the feature for the
+  same answer.
+* `gate_min_window`: sets the window behind `min_window_prob`.
+* `edge_temperature` and the consistency-sample settings: they shift the
+  logprob and agreement distributions.
+
+An operator tuning any of these kept a calibrated threshold that now meant
+something different, with no warning.
+
+**Fix:**
+
+* `Settings.signal_config()` captures these settings. Every record stores the
+  config it was produced under.
+* `hybrid-edge-calibrate` refuses to fit records produced under different
+  configs (`--any-signal-config` overrides, not recommended) and stores the
+  config in the calibration.
+* The gateway refuses to start when a calibration's config differs from the
+  running one. The error names each change (e.g. `edge_top_logprobs: 5 -> 10`),
+  and `gate_allow_calibration_mismatch` overrides, as for edge models.
+* Older calibrations without a recorded config still load.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

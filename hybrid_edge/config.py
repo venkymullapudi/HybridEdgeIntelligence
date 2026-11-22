@@ -178,6 +178,17 @@ class Settings:
         s.validate()
         return s
 
+    def signal_config(self) -> Dict[str, Any]:
+        """Settings that change what the gate's features *mean*. A calibration fit under
+        one set is meaningless under another, even on the same edge model."""
+        return {
+            "edge_temperature": self.edge_temperature,
+            "edge_top_logprobs": self.edge_top_logprobs,        # entropy is normalised by k
+            "gate_min_window": self.gate_min_window,            # min_window_prob's window
+            "gate_consistency_samples": self.gate_consistency_samples,
+            "gate_consistency_temperature": self.gate_consistency_temperature,
+        }
+
     @property
     def effective_max_body_bytes(self) -> int:
         """Up to 6 bytes per character (a \\uXXXX escape) plus JSON/field overhead, so a
