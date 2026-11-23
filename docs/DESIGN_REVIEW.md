@@ -1219,6 +1219,37 @@ gaps:
 Updating dependencies is now deliberate: regenerate `docker/constraints.txt`
 and let CI prove it.
 
+## 76. Is the infrastructure code pinned like the images?
+
+**No.** `.terraform.lock.hcl` was gitignored, so every `terraform init` took
+the newest AWS provider within `>= 6.0, < 7.0`, with no checksum
+verification. Two applies of the same commit could run different provider
+code, and a bad provider release would reach production unreviewed. That's
+the last unpinned piece after questions 73–75. HashiCorp recommends committing
+the lock file.
+
+**Fix:**
+
+* The lock file is committed: `hashicorp/aws` 6.73.0 (signed by HashiCorp),
+  with checksums for `linux_amd64`, `linux_arm64`, `darwin_arm64` and
+  `darwin_amd64`, so it works in CI, on deploy hosts and on laptops.
+* CI runs `terraform init -lockfile=readonly`, which fails if the provider
+  version or checksums would change.
+* A guard test checks that the lock is tracked, satisfies the declared
+  constraint, has per-platform checksums, and that CI enforces read-only mode.
+
+**A tooling finding along the way:** Terraform and OpenTofu can't share one
+lock file. Each records the provider under its own registry
+(`registry.terraform.io` vs `registry.opentofu.org`), and each *replaces*
+the other's entry on `init` instead of adding to it. CI uses HashiCorp
+Terraform, so the committed lock is Terraform's. Local validation now also
+uses Terraform (1.17.2, installed from HashiCorp's tap) instead of OpenTofu,
+so it checks with exactly the tool CI uses. A clean copy with
+`-lockfile=readonly` initialises and validates.
+
+To update providers: `terraform init -upgrade`, then
+`terraform providers lock` for the four platforms, then commit the lock.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

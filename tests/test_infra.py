@@ -174,3 +174,19 @@ def test_image_build_is_reproducible():
         name = req.name.lower().replace("_", "-")
         assert name in pins, f"{name} is not pinned in docker/constraints.txt"
         assert req.specifier.contains(pins[name]), f"{name}=={pins[name]} violates pyproject's {req.specifier}"
+
+
+def test_terraform_providers_are_locked():
+    """Provider versions and checksums are committed, and CI refuses to change them."""
+    import subprocess
+    from packaging.specifiers import SpecifierSet
+    lock = (TF / ".terraform.lock.hcl").read_text()
+    m = re.search(r'provider "registry\.terraform\.io/hashicorp/aws" \{\s*version\s*=\s*"([\d.]+)"\s*constraints\s*=\s*"([^"]+)"', lock)
+    assert m, "hashicorp/aws is not locked (registry.terraform.io, as CI's Terraform uses)"
+    assert SpecifierSet(m.group(2).replace(" ", "")).contains(m.group(1))
+    assert len(re.findall(r'"h1:', lock)) >= 4, "expected checksums for every platform"
+    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(TF / ".terraform.lock.hcl")],
+                             cwd=TF, capture_output=True)
+    assert tracked.returncode == 0, ".terraform.lock.hcl must be committed"
+    ci = (TF.parents[1] / ".github/workflows/ci.yml").read_text()
+    assert "terraform init -backend=false -input=false -lockfile=readonly" in ci
