@@ -137,3 +137,14 @@ def test_gateway_tags_are_immutable_and_never_latest():
     td = next(body for f, n, body in blocks("aws_ecs_task_definition") if n == "edge")
     assert '!endswith(var.gateway_image, ":")' in td
     assert ":latest" not in (TF.parents[1] / "scripts" / "deploy.sh").read_text()
+
+
+def test_ci_actions_are_pinned_to_commits_and_token_is_read_only():
+    """A tag on a third-party action can be re-pointed; a full commit SHA can't."""
+    import yaml
+    ci_path = TF.parents[1] / ".github/workflows/ci.yml"
+    uses = re.findall(r"uses:\s*(\S+)", ci_path.read_text())
+    assert uses, "no actions found"
+    for u in uses:
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", u), f"{u} is not pinned to a full commit SHA"
+    assert yaml.safe_load(ci_path.read_text())["permissions"] == {"contents": "read"}

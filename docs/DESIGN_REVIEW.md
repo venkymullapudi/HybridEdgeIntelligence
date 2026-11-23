@@ -1164,6 +1164,33 @@ and named it.
   `name@digest` form, and docker-compose uses `name:tag@digest`.
 * Static guards and deploy-script tests cover all of this.
 
+## 74. Can CI itself be hijacked?
+
+CI builds the image that ships, so it belongs to the supply chain too. Two
+gaps:
+
+* **Movable action tags.** Third-party actions were referenced by tag
+  (`actions/checkout@v7`, `hashicorp/setup-terraform@v4`). A tag can be
+  re-pointed upstream, so a compromised or force-pushed tag would run
+  arbitrary code inside our build.
+* **Default token scope.** The workflow set no `permissions`, so its
+  `GITHUB_TOKEN` got the repository's default scope, which can include write
+  access. CI only reads the code.
+
+**Fix:**
+
+* Every action is pinned to the full commit SHA behind the version in use,
+  with the version kept as a comment:
+  * `checkout` v7.0.1 → `3d3c42e5…`
+  * `setup-python` v7.1.0 → `6d4fd22b…`
+  * `setup-terraform` v4.0.1 → `dfe3c3f8…`
+
+  I resolved these with `git ls-remote`, using the commit behind each tag.
+* The workflow declares `permissions: contents: read`.
+* A static test fails if any `uses:` isn't a full 40-character SHA, or if the
+  permissions widen. Updating an action now means changing its SHA on
+  purpose.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
