@@ -148,3 +148,29 @@ def test_ci_actions_are_pinned_to_commits_and_token_is_read_only():
     for u in uses:
         assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", u), f"{u} is not pinned to a full commit SHA"
     assert yaml.safe_load(ci_path.read_text())["permissions"] == {"contents": "read"}
+
+
+def test_image_build_is_reproducible():
+    """Base image by digest, dependencies from the CI-tested constraints file, and the
+    constraints must satisfy pyproject's own bounds."""
+    from packaging.requirements import Requirement
+
+    root = TF.parents[1]
+    dockerfile = (root / "docker" / "Dockerfile").read_text()
+    assert re.search(r"^FROM python:3\.12-slim@sha256:[0-9a-f]{64}", dockerfile, re.M)
+    assert 'pip install -c constraints.txt ".[aws]"' in dockerfile
+
+    pins = {}
+    for line in (root / "docker" / "constraints.txt").read_text().splitlines():
+        if line and not line.startswith("#"):
+            name, _, version = line.partition("==")
+            pins[name.lower().replace("_", "-")] = version
+    text = (root / "pyproject.toml").read_text()
+    deps = re.findall(r'^\s*"([A-Za-z][^"]*)",', text[text.index("dependencies = ["):text.index("]", text.index("dependencies = ["))], re.M)
+    deps += re.findall(r'"(boto3[^"]*)"', text)
+    assert deps, "no dependencies parsed"
+    for spec in deps:
+        req = Requirement(spec)
+        name = req.name.lower().replace("_", "-")
+        assert name in pins, f"{name} is not pinned in docker/constraints.txt"
+        assert req.specifier.contains(pins[name]), f"{name}=={pins[name]} violates pyproject's {req.specifier}"

@@ -23,7 +23,14 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -e '.[dev]'
+      # 3.12 installs the exact versions the image ships (docker/constraints.txt);
+      # 3.9 resolves freely within the bounds, so new releases still get exercised.
+      - run: |
+          if [ "${{ matrix.python }}" = "3.12" ]; then
+            pip install -c docker/constraints.txt -e '.[dev]'
+          else
+            pip install -e '.[dev]'
+          fi
       # Branch coverage with a floor (pyproject [tool.coverage.report] fail_under).
       - run: coverage run -m pytest -q
       - run: coverage report --skip-covered --show-missing

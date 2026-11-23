@@ -1191,6 +1191,34 @@ gaps:
   permissions widen. Updating an action now means changing its SHA on
   purpose.
 
+## 75. Do two builds of the same commit produce the same image?
+
+**No.** The gateway's own build was the last unpinned link in the supply chain
+(questions 73 and 74 covered the deployed images and CI's tools):
+
+* **A moving base image.** `FROM python:3.12-slim` is re-pointed on every
+  Debian or Python patch.
+* **Fresh dependency resolution.** The upper bounds from question 26 cap major
+  versions, but each build installed the newest patch releases of FastAPI,
+  pydantic, uvicorn, anthropic and boto3, none of them tested. Two builds of
+  one commit could behave differently.
+
+**Fix:**
+
+* The base image is pinned by digest (the multi-arch index
+  `sha256:5e2bdb1b…`, which includes `linux/amd64`).
+* The image installs with `-c docker/constraints.txt`, the exact set of 45
+  versions frozen from the Python 3.12 environment that passes the suite.
+* CI's **3.12** job installs from the same file, so the versions the image
+  ships are exactly the versions CI tests. The **3.9** job keeps resolving
+  freely within the bounds, so new releases still get exercised.
+* A static test checks the digest pin, the constraints install, and that
+  every runtime dependency in the constraints satisfies `pyproject.toml`'s
+  bounds, so the lock and the bounds can't drift apart.
+
+Updating dependencies is now deliberate: regenerate `docker/constraints.txt`
+and let CI prove it.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
