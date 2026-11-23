@@ -19,13 +19,18 @@ variable "edge_regions" {
 }
 
 variable "gateway_image_tag" {
-  type    = string
-  default = "latest"
+  description = "Gateway image tag to run (scripts/deploy.sh sets it). No default: a moving tag like latest would silently roll edges forward or back on any apply."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.gateway_image_tag != "latest"
+    error_message = "Use an immutable release tag (e.g. a git SHA), not latest."
+  }
 }
 
 variable "vllm_image" {
   type    = string
-  default = "vllm/vllm-openai:v0.6.6"
+  default = "vllm/vllm-openai@sha256:6956052a3491118df885b37e240abebaf839b62495c3d54e617cb8401c54717b" # v0.6.6, pinned by digest so it can't be re-pointed
 }
 
 variable "edge_model" {

@@ -5,7 +5,7 @@
 services:
   vllm:
     profiles: ["gpu"]
-    image: vllm/vllm-openai:v0.6.6
+    image: vllm/vllm-openai:v0.6.6@sha256:6956052a3491118df885b37e240abebaf839b62495c3d54e617cb8401c54717b
     command: ["--model", "${EDGE_MODEL:-Qwen/Qwen2.5-7B-Instruct}", "--max-model-len", "8192",
               "--gpu-memory-utilization", "0.90", "--max-logprobs", "20"]
     environment:

@@ -5,6 +5,9 @@
 #
 #   scripts/deploy.sh [--yes] [image-tag]
 #
+#   Rollback: scripts/deploy.sh <previous-tag> re-deploys that exact image (tags
+#   are immutable; an existing tag is reused, not rebuilt).
+#
 #   --yes   apply without the interactive Terraform review (for CI). Without it,
 #           Terraform shows the full plan and asks: a deploy applies *every*
 #           pending infrastructure change, not just the image tag.
@@ -38,9 +41,17 @@ cluster_of() {
   python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]]["cluster"])' "$1" <<<"$EDGES_JSON"
 }
 
-aws ecr get-login-password --region "$HOME_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
-docker buildx build --platform linux/amd64 -f docker/Dockerfile -t "$REPO_URL:$TAG" -t "$REPO_URL:latest" --push .
-echo "Pushed $REPO_URL:$TAG"
+# Tags are immutable, so an existing tag already names exactly one build: reuse it.
+# That makes a retry for the same commit, or a rollback (deploy.sh <old-tag>), a
+# plain re-deploy instead of a failed push.
+if aws ecr describe-images --region "$HOME_REGION" --repository-name "$REPO_NAME" \
+     --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+  echo "Image $REPO_URL:$TAG already exists; reusing it (no rebuild)"
+else
+  aws ecr get-login-password --region "$HOME_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+  docker buildx build --platform linux/amd64 -f docker/Dockerfile -t "$REPO_URL:$TAG" --push .
+  echo "Pushed $REPO_URL:$TAG"
+fi
 
 # Wait until the tag exists in every edge region: a region the image hasn't reached
 # yet fails to pull, and ECS rolls it back while the rest of the deploy "succeeds".

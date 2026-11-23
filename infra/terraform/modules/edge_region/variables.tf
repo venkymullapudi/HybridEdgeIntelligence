@@ -15,7 +15,7 @@ variable "gateway_image" {
 
 variable "vllm_image" {
   type    = string
-  default = "vllm/vllm-openai:v0.6.6"
+  default = "vllm/vllm-openai@sha256:6956052a3491118df885b37e240abebaf839b62495c3d54e617cb8401c54717b" # v0.6.6, pinned by digest so it can't be re-pointed
 }
 
 variable "edge_model" {

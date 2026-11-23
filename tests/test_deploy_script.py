@@ -86,3 +86,17 @@ def test_rolled_back_region_fails_the_deploy(tmp_path):
 def test_unknown_option_is_rejected(tmp_path):
     p, _ = run(tmp_path, "--force")
     assert p.returncode == 2 and "unknown option" in p.stderr
+
+
+def test_existing_tag_is_reused_not_rebuilt(tmp_path):
+    p, calls = run(tmp_path, "--yes", "v9", missing_polls=0)  # tag already in every region's ECR
+    assert p.returncode == 0, p.stderr
+    assert "already exists; reusing it" in p.stdout
+    assert "docker buildx" not in calls and "docker login" not in calls
+
+
+def test_new_tag_is_built_and_pushed_without_latest(tmp_path):
+    p, calls = run(tmp_path, "--yes", "v9", missing_polls=2)
+    assert p.returncode == 0, p.stderr
+    build = next(c for c in calls.splitlines() if c.startswith("docker buildx"))
+    assert f"-t {REPO}:v9 --push" in build and ":latest" not in build

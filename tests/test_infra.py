@@ -117,3 +117,23 @@ def test_gateway_runs_with_least_privilege():
     assert 'capabilities       = { drop = ["ALL"] }' in gw
     ci = (TF.parents[1] / ".github/workflows/ci.yml").read_text()
     assert "--read-only --cap-drop ALL" in ci  # and CI proves the image runs that way
+
+
+DIGEST_RE = r"@sha256:[0-9a-f]{64}"
+
+
+def test_vllm_image_is_pinned_by_digest_everywhere():
+    for p in [TF / "variables.tf", TF / "modules/edge_region/variables.tf"]:
+        block = re.search(r'variable "vllm_image" \{.*?\n\}', p.read_text(), re.S).group(0)
+        assert re.search(r'default\s*=\s*"vllm/vllm-openai' + DIGEST_RE, block), p.name
+    compose = (TF.parents[1] / "docker" / "docker-compose.yml").read_text()
+    assert re.search(r"image: vllm/vllm-openai:v[\d.]+" + DIGEST_RE, compose)
+
+
+def test_gateway_tags_are_immutable_and_never_latest():
+    assert 'image_tag_mutability = "IMMUTABLE"' in (TF / "main.tf").read_text()
+    var = re.search(r'variable "gateway_image_tag" \{.*?\n\}', (TF / "variables.tf").read_text(), re.S).group(0)
+    assert 'default     = ""' in var and 'var.gateway_image_tag != "latest"' in var
+    td = next(body for f, n, body in blocks("aws_ecs_task_definition") if n == "edge")
+    assert '!endswith(var.gateway_image, ":")' in td
+    assert ":latest" not in (TF.parents[1] / "scripts" / "deploy.sh").read_text()

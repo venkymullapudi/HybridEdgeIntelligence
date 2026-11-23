@@ -145,7 +145,7 @@ From the repo root, build the gateway image, push it, and apply everything:
 scripts/deploy.sh v1
 ```
 
-The script waits until the image has replicated to every edge region, then shows the full Terraform plan for review (`--yes` skips the review, for CI). After applying, it checks that each region's ECS service actually runs the new tag, and exits non-zero naming any region the deployment circuit breaker rolled back.
+Image tags are immutable, so each tag always names one build, and rolling back is just `scripts/deploy.sh <previous-tag>` (an existing tag is reused, not rebuilt). There's no `latest`: a plain `terraform apply` needs `-var gateway_image_tag=<tag>`. The vLLM image is pinned by digest. The script waits until the image has replicated to every edge region, then shows the full Terraform plan for review (`--yes` skips the review, for CI). After applying, it checks that each region's ECS service actually runs the new tag, and exits non-zero naming any region the deployment circuit breaker rolled back.
 
 Put the secret values in through the AWS CLI so they never land in Terraform state. Do this for each name in the `secrets_to_populate` output:
 

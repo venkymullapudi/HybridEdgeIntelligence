@@ -251,7 +251,14 @@ locals {
 }
 
 resource "aws_ecs_task_definition" "edge" {
-  family                   = local.prefix
+  family = local.prefix
+
+  lifecycle {
+    precondition {
+      condition     = !endswith(var.gateway_image, ":")
+      error_message = "No gateway image tag set: deploy with scripts/deploy.sh <tag>, or pass -var gateway_image_tag=<tag>."
+    }
+  }
   requires_compatibilities = ["EC2"]
   network_mode             = "awsvpc"
   execution_role_arn       = aws_iam_role.execution.arn

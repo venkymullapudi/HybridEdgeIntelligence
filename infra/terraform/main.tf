@@ -10,8 +10,9 @@ locals {
 # Container registry (home region) replicated into every edge region
 # --------------------------------------------------------------------------
 resource "aws_ecr_repository" "gateway" {
-  name                 = "${var.name}/gateway"
-  image_tag_mutability = "MUTABLE"
+  name = "${var.name}/gateway"
+  # Immutable: a tag always means the same image, so rollback-by-tag is reliable.
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = false
   image_scanning_configuration { scan_on_push = true }
   encryption_configuration { encryption_type = "AES256" }

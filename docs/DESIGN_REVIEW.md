@@ -1135,6 +1135,35 @@ nobody has to maintain them. Renaming a setting, or mistyping one in the docs,
 fails CI. Checked by planting `gate_treshold` in the README: the test failed
 and named it.
 
+## 73. Does a given deploy always run the same images?
+
+**No.** Three weaknesses in the supply chain:
+
+* **A moving default tag.** `gateway_image_tag` defaulted to `latest`, so any
+  `terraform apply` without the variable deployed whatever `latest` pointed to
+  at that moment. Edges could silently roll forward or back.
+* **Mutable ECR tags.** Re-deploying a tag didn't guarantee the same image,
+  which made rollback-by-tag unreliable. `deploy.sh` also re-pushed `:latest`
+  on every deploy.
+* **The vLLM image was pinned only by tag**
+  (`vllm/vllm-openai:v0.6.6`). Every GPU node in every region pulls it from
+  Docker Hub, where a tag can be re-pointed.
+
+**Fix:**
+
+* The ECR repository's tags are **immutable**. `deploy.sh` pushes only the
+  release tag, and **reuses** a tag that already exists instead of failing to
+  push. So a retry for the same commit, or a rollback with
+  `deploy.sh <previous-tag>`, re-deploys that exact build.
+* `gateway_image_tag` has no default. `latest` is rejected, and an empty tag
+  fails at plan time with a message pointing at `deploy.sh`. The targeted
+  ECR-only bootstrap apply is unaffected.
+* vLLM is pinned by **digest**:
+  `vllm/vllm-openai@sha256:6956052a…717b`, looked up from Docker Hub's registry
+  for `v0.6.6`, a single linux/amd64 manifest. Terraform uses the documented
+  `name@digest` form, and docker-compose uses `name:tag@digest`.
+* Static guards and deploy-script tests cover all of this.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
