@@ -66,7 +66,7 @@ jobs:
           # File record sink at its default path: it must be writable by the non-root user.
           docker run -d --name gw -p 8080:8080 \
             -e HEI_EDGE_BACKEND=mock -e HEI_CLOUD_PROVIDER=none -e HEI_EMIT_EMF=false \
-            -e HEI_RECORD_SINK=file \
+            -e HEI_RECORD_SINK=file -e HEI_RECORD_SAMPLE_RATE_CONFIDENT=0 \
             hybrid-edge-gateway:ci
           for i in $(seq 1 60); do
             status=$(docker inspect --format '{{.State.Health.Status}}' gw)
@@ -89,7 +89,9 @@ jobs:
           done
           docker exec gw sh -c 'test -s data/escalations.jsonl && head -c 300 data/escalations.jsonl' || {
             echo "no escalation record after 30s"; docker exec gw ls -la data || true; exit 1; }
-          docker exec gw python -c "import json; r=json.loads(open('data/escalations.jsonl').readline()); assert r['escalated'], r"
+          # Some record must be the escalation (not "the first": confident requests can be
+          # sampled into the file too; that made this check fail ~2.5% of runs).
+          docker exec gw python -c "import json; rs=[json.loads(l) for l in open('data/escalations.jsonl')]; assert any(r['escalated'] for r in rs), rs"
       # The ECS deployment runs the gateway read-only with every capability dropped:
       # prove the image works that way.
       - name: Smoke-test the image locked down

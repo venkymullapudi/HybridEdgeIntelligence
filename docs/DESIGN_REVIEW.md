@@ -1327,6 +1327,36 @@ capacity. A static test guards the setting on both containers.
 Not verified against a real throttled CloudWatch. It's an infrastructure
 setting, and validating it needs a deployment.
 
+## 80. Why did the image smoke test keep failing at random?
+
+The Docker smoke step failed on `d777be9` and again on `3d94f16`, both commits
+that didn't touch the image. **My diagnosis in question 77 was wrong.** I
+blamed a fixed `sleep` before the record-file check. Polling made that wait
+more robust, but it wasn't the cause.
+
+**Real cause:** a test I wrote in question 70. The step sends two *confident*
+requests, then one hard one, and asserted that the **first line** of the
+record file is an escalation. But confident requests are also recorded, with
+probability `record_sample_rate_confident` (0.02), to collect calibration
+data. About once in 40 runs a confident request was sampled first, and the
+assertion failed. Two clues pointed there: the step failed in 8 seconds,
+which is also how long passing runs take, so it wasn't a timeout; and the
+failures started only after question 70 added the check. Replaying the exact
+request sequence against the real app reproduced it: **10 of 400 runs
+(2.5%)**.
+
+**Fix:**
+
+* The smoke container runs with `HEI_RECORD_SAMPLE_RATE_CONFIDENT=0`.
+* The check asserts that *some* record is an escalation, the property that
+  actually matters.
+
+The same 400-run replay with the fixed check fails 0 times.
+
+**Lesson:** a test that reads "the first record" from a deliberately
+randomised stream is flaky by construction. I should have caught it when
+writing question 70.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
