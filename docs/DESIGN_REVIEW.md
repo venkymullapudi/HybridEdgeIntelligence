@@ -1250,6 +1250,32 @@ so it checks with exactly the tool CI uses. A clean copy with
 To update providers: `terraform init -upgrade`, then
 `terraform providers lock` for the four platforms, then commit the lock.
 
+## 77. Can calibration produce a file that turns the edge off?
+
+**Yes, and it reported success.** When the target precision is out of reach
+(labels with little signal, or an edge model that's weak on the workload),
+`choose_threshold` picks the threshold that serves only the one or two
+answers that happen to meet it. With uninformative labels, the calibrator
+exited 0 and wrote a calibration that escalated **99.7%** of traffic. If
+nothing met the target, it fell back to a threshold of 1.0, escalating
+*everything*, and still wrote the file. Deployed, the edge does nothing and
+the Claude bill explodes.
+
+**Fix:** `hybrid-edge-calibrate` refuses to write a calibration whose
+escalation rate exceeds `--max-escalation-rate`, or that serves nothing from
+the edge. It exits non-zero and states the coverage and escalation rate it
+would have shipped, and points at `--sweep`, the labels and the target.
+`--max-escalation-rate 1.0` overrides.
+
+The default is **0.9**, not something stricter. My first choice, 0.5,
+refused the test data's honest ~65% escalation, a trade-off an operator with
+a hard workload can legitimately make. The check exists to catch a
+calibration that effectively disables the edge, not to second-guess reasonable
+choices.
+
+Separately: since question 76, local validation must use `terraform`, not
+`tofu`. `tofu init` would overwrite the committed Terraform lock file.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

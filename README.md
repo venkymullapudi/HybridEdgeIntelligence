@@ -196,7 +196,7 @@ Choosing τ trades **escalation rate** (cost) against **edge precision** (qualit
    hybrid-edge-calibrate labelled.jsonl -o calibration.json --target-precision 0.95 --sweep
    ```
 
-   `--sweep` adds coverage, precision and escalation rate at every threshold, so you can pick the target precision from the curve.
+   `--sweep` adds coverage, precision and escalation rate at every threshold, so you can pick the target precision from the curve. The calibrator refuses to write a calibration that would escalate more than `--max-escalation-rate` (default 0.9) of traffic, so an unreachable target can't quietly turn the edge off.
 
    ```
    {"rows": 5000, "threshold": 0.62, "edge_coverage": 0.78, "edge_precision": 0.951, "escalation_rate": 0.22}

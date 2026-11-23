@@ -141,6 +141,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("records", nargs="+", help="record files, .gz files or directories")
     ap.add_argument("-o", "--output", default="calibration.json")
     ap.add_argument("--target-precision", type=float, default=0.95)
+    ap.add_argument("--max-escalation-rate", type=float, default=0.9,
+                    help="refuse to write a calibration that would escalate more than this share of "
+                         "traffic to Claude (1.0 disables the check)")
     ap.add_argument("--weak-labels", action="store_true")
     ap.add_argument("--weak-threshold", type=float, default=0.5)
     ap.add_argument("--sweep", action="store_true",
@@ -172,6 +175,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         raise SystemExit(f"need >= 20 labelled rows with both classes, got {len(rows)}")
     cal = fit(rows)
     thr, stats = choose_threshold(cal, rows, args.target_precision)
+    if stats["edge_coverage"] <= 0 or stats["escalation_rate"] > args.max_escalation_rate:
+        # Deploying this would turn the edge off and send (nearly) everything to Claude.
+        # Usually the target precision is out of reach for this edge model, or the labels
+        # carry little signal; neither is fixed by shipping it.
+        raise SystemExit(
+            f"refusing to write {args.output}: at --target-precision {args.target_precision} the edge would "
+            f"serve only {stats['edge_coverage']:.1%} of traffic (escalation rate "
+            f"{stats['escalation_rate']:.1%} > --max-escalation-rate {args.max_escalation_rate}). "
+            "Lower --target-precision (see --sweep for the trade-off), check the labels, or pass "
+            "--max-escalation-rate 1.0 to write it anyway.")
     cal.threshold = round(thr, 4)
     cal.edge_model = edge_model
     cal.signal_config = signal_config
