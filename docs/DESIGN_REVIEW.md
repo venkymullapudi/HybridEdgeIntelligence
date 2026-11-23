@@ -1116,6 +1116,25 @@ is on. The vLLM container is unchanged, since it writes model caches.
 It must become healthy, answer an escalating request, and refuse a write to
 `/app`. A static test guards the task definition.
 
+## 72. Do the docs still describe the code?
+
+Doc drift has caused real bugs twice: the scale-to-zero advice (question 59)
+and the quickstart's surprise API calls (question 60). The docs now name
+dozens of settings, so I cross-checked every `HEI_*` variable (in the README,
+this review, docker-compose, CI and Terraform), every `config.example.yaml`
+key, and every backticked name in the README against the code.
+
+**Result: no drift.** Every name exists. Most look like settings, and the rest
+are legitimate request fields, response fields, signal names and Terraform
+outputs.
+
+**Guard:** `tests/test_docs.py` makes the check permanent. Its allowlists are
+*derived* from the code (the `Settings` fields, the request and response
+models, `Signals`, Terraform variables and outputs, and the usage keys), so
+nobody has to maintain them. Renaming a setting, or mistyping one in the docs,
+fails CI. Checked by planting `gate_treshold` in the README: the test failed
+and named it.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and
