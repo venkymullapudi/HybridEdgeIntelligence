@@ -1306,6 +1306,27 @@ something specific to that one run.
 
 If the stack dump ever appears, it goes to the top of the next iteration.
 
+## 79. Can a CloudWatch Logs hiccup take the gateway down?
+
+**Yes.** The gateway writes EMF metrics to stdout on **every request**,
+synchronously, from inside the event loop (`Metrics.observe()` →
+`sys.stdout.write()` / `flush()`). The ECS `awslogs` driver defaults to
+**blocking** mode. If CloudWatch Logs is slow or throttling, the driver stops
+draining the container's stdout. Once the pipe fills, each `flush()` blocks,
+and since it blocks the event loop, *every* request stalls at once, including
+the ones the edge could answer locally. A logging-service problem becomes a
+full outage.
+
+**Fix:** both containers' log configuration uses the driver's
+`mode = non-blocking` with a 25 MB buffer, the AWS-documented remedy. If
+CloudWatch falls behind, log lines are buffered, and past the buffer,
+dropped, but writes never block. The trade-off is deliberate: under extreme
+log backpressure we can lose some metrics and log lines, but never serving
+capacity. A static test guards the setting on both containers.
+
+Not verified against a real throttled CloudWatch. It's an infrastructure
+setting, and validating it needs a deployment.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

@@ -240,12 +240,18 @@ locals {
   )
   vllm_secrets = var.hf_token_secret_arn == "" ? [] : [{ name = "HF_TOKEN", valueFrom = var.hf_token_secret_arn }]
 
+  # Non-blocking: in the default blocking mode, a slow or throttled CloudWatch Logs
+  # stops draining stdout; the gateway writes EMF metrics to stdout on every request,
+  # from the event loop, so a full pipe would stall *every* request. Non-blocking
+  # buffers (then drops) log lines instead: a logging hiccup costs metrics, not uptime.
   logs = {
     logDriver = "awslogs"
     options = {
       "awslogs-group"         = aws_cloudwatch_log_group.this.name
       "awslogs-region"        = local.region
       "awslogs-stream-prefix" = "edge"
+      "mode"                  = "non-blocking"
+      "max-buffer-size"       = "25m"
     }
   }
 }

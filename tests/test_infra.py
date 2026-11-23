@@ -200,3 +200,14 @@ def test_hangs_fail_fast_with_a_stack_dump():
     for name, job in jobs.items():
         assert 0 < job.get("timeout-minutes", 0) <= 30, f"CI job {name} has no tight timeout"
     assert re.search(r"^faulthandler_timeout\s*=\s*\d+", (root / "pyproject.toml").read_text(), re.M)
+
+
+def test_container_logging_never_blocks_requests():
+    """EMF metrics go to stdout on the request path; a blocking log driver would let a
+    slow CloudWatch Logs stall every request (question 79)."""
+    ecs = (TF / "modules/edge_region/ecs.tf").read_text()
+    logs = ecs[ecs.index("  logs = {"):]
+    logs = logs[:logs.index("\n  }\n") + 4]
+    assert '"mode"                  = "non-blocking"' in logs
+    assert re.search(r'"max-buffer-size"\s*=\s*"\d+m"', logs)
+    assert ecs.count("logConfiguration = local.logs") == 2  # vLLM and the gateway
