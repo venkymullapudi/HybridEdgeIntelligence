@@ -33,6 +33,9 @@ include = ["hybrid_edge*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# A test running this long is hung, not slow (the suite takes ~20 s): dump every
+# thread's stack so the culprit is visible instead of a silent spin.
+faulthandler_timeout = 120
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
 

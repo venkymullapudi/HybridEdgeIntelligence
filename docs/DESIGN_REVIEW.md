@@ -1276,6 +1276,36 @@ choices.
 Separately: since question 76, local validation must use `terraform`, not
 `tofu`. `tofu init` would overwrite the committed Terraform lock file.
 
+## 78. Is the test suite itself trustworthy?
+
+After a CI flake (question 77), I checked the Python suite for flaky tests by
+running it repeatedly on both Python versions, under artificial CPU load to
+mimic a busy CI runner.
+
+**What I saw:** in the first batch, one Python 3.12 run **spun at 99% CPU for
+about an hour** instead of finishing in ~20 s: a busy loop, not a slow test.
+(Separately, my load generator's cleanup failed, and its CPU-burning
+processes outlived their 10-minute budget until I stopped them. That's my
+harness's fault, not the project's.)
+
+**What I could not do:** reproduce it. 28 further runs, alternating both
+Python versions under the same load with a watchdog and stack dumps armed,
+all passed in 19–25 s. Without a reproduction and its stack, I can't name a
+cause, so I haven't claimed a fix. It may be a rare race in the suite, or
+something specific to that one run.
+
+**What changed:** a hang can no longer sit silently.
+
+* `faulthandler_timeout = 120` in the pytest config dumps every thread's
+  stack if any single test runs past 2 minutes (the whole suite takes
+  ~20 s), which names the culprit the next time it happens.
+* Every CI job has `timeout-minutes` (15 for tests, 10 for Terraform, 20 for
+  Docker), so a hang fails in minutes instead of running to GitHub's
+  6-hour job limit.
+* A static test keeps both in place.
+
+If the stack dump ever appears, it goes to the top of the next iteration.
+
 ## Not changed (and why)
 
 * **Shared cache across nodes (Redis/ElastiCache):** it adds a dependency and

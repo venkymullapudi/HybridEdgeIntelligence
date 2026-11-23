@@ -190,3 +190,13 @@ def test_terraform_providers_are_locked():
     assert tracked.returncode == 0, ".terraform.lock.hcl must be committed"
     ci = (TF.parents[1] / ".github/workflows/ci.yml").read_text()
     assert "terraform init -backend=false -input=false -lockfile=readonly" in ci
+
+
+def test_hangs_fail_fast_with_a_stack_dump():
+    """A rare spin was seen once locally (question 78): it must fail fast and show where."""
+    import yaml
+    root = TF.parents[1]
+    jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())["jobs"]
+    for name, job in jobs.items():
+        assert 0 < job.get("timeout-minutes", 0) <= 30, f"CI job {name} has no tight timeout"
+    assert re.search(r"^faulthandler_timeout\s*=\s*\d+", (root / "pyproject.toml").read_text(), re.M)

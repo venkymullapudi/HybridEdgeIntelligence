@@ -12,6 +12,8 @@ permissions:
 
 jobs:
   test:
+    # Fail fast on a hang instead of burning the runner to GitHub's 6 h limit.
+    timeout-minutes: 15
     # ubuntu-latest (26.04) has no Python 3.9 build; 24.04 has both versions we test.
     runs-on: ubuntu-24.04
     strategy:
@@ -36,6 +38,8 @@ jobs:
       - run: coverage report --skip-covered --show-missing
 
   terraform:
+    # Fail fast on a hang instead of burning the runner to GitHub's 6 h limit.
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -49,6 +53,8 @@ jobs:
       - run: terraform validate
 
   docker:
+    # Fail fast on a hang instead of burning the runner to GitHub's 6 h limit.
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
