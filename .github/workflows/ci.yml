@@ -67,7 +67,7 @@ jobs:
             [ "$status" = healthy ] && break
             sleep 1
           done
-          test "$status" = healthy
+          test "$status" = healthy || { docker inspect --format '{{json .State.Health}}' gw; exit 1; }
           curl -sf localhost:8080/v1/infer -H 'content-type: application/json' \
             -d '{"prompt":"What is the capital of France?"}' | tee /dev/stderr | grep -q '"source":"edge"'
           curl -sfN localhost:8080/v1/infer/stream -H 'content-type: application/json' \
@@ -76,8 +76,13 @@ jobs:
           # A low-confidence prompt is an escalation, so it must produce a record.
           curl -sf localhost:8080/v1/infer -H 'content-type: application/json' \
             -d '{"prompt":"prove this hard theorem"}' > /dev/null
-          sleep 3
-          docker exec gw sh -c 'test -s data/escalations.jsonl && head -c 300 data/escalations.jsonl'
+          # Records are written by a background thread; poll instead of a fixed sleep.
+          for i in $(seq 1 30); do
+            docker exec gw sh -c 'test -s data/escalations.jsonl' && break
+            sleep 1
+          done
+          docker exec gw sh -c 'test -s data/escalations.jsonl && head -c 300 data/escalations.jsonl' || {
+            echo "no escalation record after 30s"; docker exec gw ls -la data || true; exit 1; }
           docker exec gw python -c "import json; r=json.loads(open('data/escalations.jsonl').readline()); assert r['escalated'], r"
       # The ECS deployment runs the gateway read-only with every capability dropped:
       # prove the image works that way.
